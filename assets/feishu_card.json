@@ -1,0 +1,47 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "config": { "wide_screen_mode": true },
+    "header": {
+      "title": { "tag": "plain_text", "content": "📄 论文推荐 · {{DIRECTION}}" },
+      "template": "blue"
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**标题**：{{TITLE}}\n**作者**：{{AUTHORS}}\n**出处**：{{YEAR_VENUE}}\n**链接**：{{URL_TEXT}}"
+        }
+      },
+      {
+        "tag": "div",
+        "text": { "tag": "lark_md", "content": "**摘要**：{{ABSTRACT}}" }
+      },
+      {
+        "tag": "div",
+        "text": { "tag": "lark_md", "content": "**趋势分析**：{{TRENDS}}" }
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "由 FastInsight 自动分拣，已转发给你 👀"
+          }
+        ]
+      },
+      {
+        "tag": "action",
+        "actions": [
+          {
+            "tag": "button",
+            "text": { "tag": "plain_text", "content": "查看原文" },
+            "type": "primary",
+            "url": "{{URL}}"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: "FastInsight"
+  short_description: "Route Feishu papers with verified research insights"
+  default_prompt: "Use $fastinsight to identify this paper screenshot, classify its topic, and route it to the right Feishu teammate."
+
+policy:
+  allow_implicit_invocation: true

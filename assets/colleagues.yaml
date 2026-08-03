@@ -1,0 +1,73 @@
+# ============================================================================
+# 研究方向 → 负责同学 名册 (colleagues roster)
+# ----------------------------------------------------------------------------
+# 用法：复制本文件为 colleagues.yaml，填入你们团队的真实信息。
+# 每个 direction 的 keywords 用于自动匹配论文标题/摘要，命中越多分越高。
+# 可选 priority 用于同分时明确指定优先级，数值越大越优先。
+# owners 是收到该方向论文的同学（飞书 open_id，见 feishu_integration.md 获取）。
+# 没有任何方向命中时，会 fallback 到 default_owner（可选，留空则提示人工处理）。
+# 修改后运行：python scripts/validate_roster.py colleagues.yaml
+# ============================================================================
+
+directions:
+  - name: "网络安全 / AI安全"
+    keywords:
+      - "adversarial"
+      - "evasion attack"
+      - "malicious traffic"
+      - "cybersecurity"
+      - "vulnerability"
+      - "proof-of-concept"
+      - "PoC"
+      - "black-box attack"
+      - "ML-based detection"
+      - "intrusion detection"
+      - "attack success rate"
+      - "zero-day"
+      - "exploit"
+      - "security benchmark"
+      - "AI agent"
+      - "malware"
+      - "network security"
+      - "traffic detection"
+      - "对抗攻击"
+      - "漏洞"
+      - "网络安全"
+      - "secure multiparty computation"
+      - "MPC"
+      - "privacy-preserving"
+      - "malicious security"
+      - "three-party"
+      - "3PC"
+      - "secure inference"
+      - "VDPF"
+      - "privacy-preserving machine learning"
+      - "PPML"
+      - "semi-honest"
+      - "secret sharing"
+      - "homomorphic encryption"
+      - "secure computation"
+      - "隐私计算"
+      - "安全多方计算"
+    owners:
+      - name: "夏天"
+        feishu_open_id: "ou_7c3a26084ba220e9bfcb86a7894eaeb2"
+        note: "唯一负责人"
+
+  - name: "大语言模型 / LLM"
+    keywords:
+      - "large language model"
+      - "GPT"
+      - "instruction tuning"
+      - "RLHF"
+      - "prompt"
+      - "预训练"
+      - "chatbot"
+    owners:
+      - name: "夏天"
+        feishu_open_id: "ou_7c3a26084ba220e9bfcb86a7894eaeb2"
+
+# 兜底负责人：没有任何方向命中时转发给 TA
+default_owner:
+  name: "夏天"
+  feishu_open_id: "ou_7c3a26084ba220e9bfcb86a7894eaeb2"
