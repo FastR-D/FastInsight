@@ -1,4 +1,5 @@
 # Python
+.env
 __pycache__/
 *.py[cod]
 *$py.class
@@ -21,3 +22,6 @@ env/
 *.log
 *.tmp
 *.bak
+
+# Runtime artifacts
+feishu_card_payload_*.json

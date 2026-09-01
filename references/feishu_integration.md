@@ -1,10 +1,10 @@
 # Feishu (Lark) Integration Reference
 
-FastInsight assumes **WorkBuddy is the bot**, connected to Feishu via the Feishu
-connector. This page documents (1) the connector-based flow used by the skill, and
-(2) the raw Feishu Open API for teams that want to self-host instead.
+FastInsight can run as a self-hosted Feishu bot using the official long-lived
+connection. This page documents (1) the connector-based flow used by the skill,
+(2) long connection mode, and (3) the raw webhook API for teams that need it.
 
-## 1. Connector-based flow (recommended)
+## 1. Connector-based flow (optional)
 
 1. In WorkBuddy, open the connector panel and enable **飞书 (Feishu)**. Follow the
    OAuth/login prompt to link your Feishu account / tenant.
@@ -29,7 +29,23 @@ connector. This page documents (1) the connector-based flow used by the skill, a
   bot's incoming message event includes their `sender.sender_id.open_id`. Record
   those into `colleagues.yaml`.
 
-## 2. Raw Feishu Open API (self-hosting)
+## 2. Long connection mode (self-hosting)
+
+The self-hosted bridge uses the official `lark-oapi` SDK and a persistent
+WebSocket connection. Configure the app in the Feishu developer console:
+
+1. Enable the bot capability and grant message receive/send scopes.
+2. Under event subscriptions choose **use long connection to receive events**.
+3. Subscribe to `im.message.receive_v1`.
+4. Set `FEISHU_APP_ID` and `FEISHU_APP_SECRET`, then run
+   `python scripts/feishu_bridge.py`.
+
+No public request URL or `FEISHU_VERIFICATION_TOKEN` is needed. The SDK handles
+connection heartbeats and reconnects. The bridge dispatches text/link messages
+to `auto_pipeline.py`; image messages require an OCR or multimodal step before
+they can be processed.
+
+## 3. Raw Feishu Open API (webhook self-hosting)
 
 Use this only if you run your own service instead of the connector.
 
@@ -90,7 +106,7 @@ or `msg_type: "text"`:
   "content": "{\"text\":\"✅ 已将《标题》分拣至【方向】，转发给 @张三、@李四。\"}" }
 ```
 
-## 3. Card shape
+## 4. Card shape
 
 The forward card is an interactive card (see `assets/feishu_card.json`). Key
 fields: `header.template` (color), `elements[].tag` (`div`, `note`, `action`),

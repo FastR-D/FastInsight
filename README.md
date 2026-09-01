@@ -9,7 +9,8 @@ FastInsight 是一个用于 Feishu/Lark 群聊的论文与研究资讯自动分�
 ### 1. 准备环境
 
 - Python 3.8 或更高版本
-- 已连接的 Feishu/Lark connector
+- 已创建并启用飞书自建应用（机器人能力）
+- 已安装 `lark-oapi`：`pip install -r requirements.txt`
 - 一份包含真实 `feishu_open_id` 的负责人名册
 
 复制名册模板并填写真实信息：
@@ -32,6 +33,32 @@ python scripts\validate_roster.py assets\colleagues.yaml
 ```text
 $fastinsight 处理这张论文截图，识别论文、分析研究方向，并转发给对应同事。
 ```
+
+## 联动 FastResearch
+
+FastResearch 的四个项目入口均可直接访问，不再使用按入口分发的 Token。阅读整合和 FastInsight 信息存放在 FastResearch 的个人 Key 工作区中。管理员在 FastResearch 后台按成员姓名生成个人 Key 后，将 Key 单独发送给成员。
+
+处理完成后可将结果发布到对应成员：
+
+```bash
+python scripts/publish_to_research.py --paper paper.json --trends trends.json --person "成员姓名" --endpoint http://127.0.0.1:8787 --ingest-key "$env:FASTINSIGHT_INGEST_KEY"
+```
+
+服务端需设置同一个 `FASTINSIGHT_INGEST_KEY`。该凭证仅用于 FastInsight 到 FastResearch 的服务端发布，成员查看内容时只需要个人 Key。
+
+### 飞书长连接自动接入
+
+桥接服务使用飞书官方长连接（WebSocket）接收 `im.message.receive_v1` 事件。FastInsight 主动连接飞书，因此不需要公网回调地址、Nginx 或 HTTPS Webhook：
+
+```powershell
+$env:FASTRESEARCH_URL = "http://127.0.0.1:8787"
+$env:FASTINSIGHT_INGEST_KEY = "your-service-key"
+$env:FEISHU_APP_ID = "cli_xxxxxxxxxxxxx"
+$env:FEISHU_APP_SECRET = "your-feishu-app-secret"
+python scripts\feishu_bridge.py
+```
+
+在飞书开发者后台为应用启用机器人能力，事件订阅选择“使用长连接接收事件”，订阅 `im.message.receive_v1`，并授予接收消息所需权限。启动脚本后会自动重连；普通文本和链接会自动进入识别、验证、趋势分析、方向分拣和 FastResearch 发布流程。截图消息仍需要上游 OCR/多模态识别后再交给 `auto_pipeline.py`。
 
 也可以发送论文链接：
 

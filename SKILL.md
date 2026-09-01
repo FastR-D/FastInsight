@@ -7,20 +7,23 @@ description: "Use FastInsight to process a paper, poster, or research-news scree
 
 ## Purpose
 
-Use WorkBuddy as the Feishu/Lark bot for a complete paper-triage loop:
+Use the Feishu bot through the official long-lived WebSocket connection for a complete paper-triage loop:
 
 `image or link → identify → verify → summarize → classify → preview → forward → confirm`
 
-WorkBuddy itself is the bot connected through the Feishu connector; no separate
-server is required.
+`scripts/feishu_bridge.py` maintains the connection and invokes the local
+pipeline; no public webhook server is required.
 
 ## Prerequisites
 
-1. Connect the Feishu connector so WorkBuddy can receive images and send cards.
-2. Copy `assets/colleagues.yaml.example` to `colleagues.yaml`, fill in real
+1. Create a Feishu app with bot capability, enable long connection event
+   delivery, and subscribe to `im.message.receive_v1`. Set `FEISHU_APP_ID` and
+   `FEISHU_APP_SECRET`.
+2. Install dependencies with `pip install -r requirements.txt`.
+3. Copy `assets/colleagues.yaml.example` to `colleagues.yaml`, fill in real
    `feishu_open_id` values, and run:
    `python scripts/validate_roster.py colleagues.yaml`.
-3. Provide outbound network access only when academic verification or trend
+4. Provide outbound network access only when academic verification or trend
    enrichment is needed. Basic lookups use Semantic Scholar, arXiv, and Crossref
    without API keys; see `references/academic_search.md`.
 
@@ -114,10 +117,13 @@ Keep keywords distinctive and maintain the roster with
 - `scripts/verify_paper.py`: verify and enrich a paper through public APIs.
 - `scripts/analyze_trends.py`: collect citation, field, and related-work signals.
 - `scripts/route_paper.py`: classify, validate owners, and render the card.
+- `scripts/publish_to_research.py`: publish a routed result into a FastResearch member workspace.
+- `scripts/auto_pipeline.py`: automatically verify, enrich, route, and publish a paper.
+- `scripts/feishu_bridge.py`: receive Feishu events over a long-lived connection and trigger the automatic pipeline.
 - `scripts/validate_roster.py`: lint roster structure, IDs, duplicates, and
   placeholders.
 - `scripts/mini_yaml.py`: dependency-free fallback parser for the roster subset.
-- `references/feishu_integration.md`: connector and raw API send/receive notes.
+- `references/feishu_integration.md`: connector, long connection, and raw API send/receive notes.
 - `references/research_taxonomy.md`: starter research directions and keywords.
 - `references/academic_search.md`: endpoints, optional credentials, and fallback
   behavior.
