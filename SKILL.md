@@ -80,13 +80,30 @@ direction owner falls back to a valid `default_owner` when available. Inspect
 
 ### 5. Forward and confirm
 
-When `routable` is true, send the generated interactive card to every returned
-owner through the connector. For a persisted payload, omit `--dry-run`; the
-default output is `feishu_card_payload.json`.
+When `routable` is true, the delivery has TWO mandatory steps — doing only one
+means the team will say "FastResearch 没有接收到":
+
+1. Send the generated interactive card to every returned owner (Feishu API or
+   connector). For a persisted payload, omit `--dry-run`; the default output is
+   `feishu_card_payload.json`. Wrap HTTP calls in a retry (the Feishu API
+   intermittently fails with `SSL UNEXPECTED_EOF`).
+2. Publish the same result to the FastResearch local service (it is a separate
+   inbox from Feishu and receives nothing automatically):
+
+   ```bash
+   python scripts/publish_to_research.py --paper paper.json --trends trends.json \
+     --person "成员名" --direction "方向名"
+   ```
+
+   Requires `FASTRESEARCH_URL` and `FASTINSIGHT_INGEST_KEY` from `.env`. Check
+   `{"ok":true,"deliveredTo":[...]}` in the response. Note `route_paper.py`
+   persists the card with `--card-out` (not `--json-out`), and that file
+   contains only `msg_type` + `card` — owners must come from the dry-run
+   output.
 
 Then confirm in the source group, for example:
 
-`✅ 已将《标题》分拣至【方向】，转发给 @张三、@李四。`
+`✅ 已将《标题》分拣至【方向】，转发给 @张三、@李四，并已发布至 FastResearch。`
 
 Include the short trend summary when available. Mention fallback routing so the
 sender can correct the classification.
