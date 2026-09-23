@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from service_auth import service_configuration, service_token
+
 ROOT = Path(__file__).resolve().parent
 ROSTER_DEFAULT = ROOT.parent / "assets" / "colleagues.yaml"
 
@@ -33,7 +35,7 @@ def _run_json(command):
         return {}, completed.returncode
 
 
-def _publish(endpoint, ingest_key, person, paper, trends, direction):
+def _publish(endpoint, ingest_key, person, paper, trends, direction, *, cas_config=None, receiver_ref=""):
     summary = _text(paper.get("abstract"))[:900]
     trend_summary = _text(trends.get("trend_summary"))
     if trend_summary:
@@ -49,10 +51,18 @@ def _publish(endpoint, ingest_key, person, paper, trends, direction):
         "direction": direction,
         "source": "FastInsight",
     }
+    if cas_config:
+        if not receiver_ref:
+            raise ValueError("FastCAS 服务投递需要名册中的 receiver_ref")
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + service_token(cas_config, endpoint)}
+        payload = {"receiver_ref": receiver_ref, "item": item}
+    else:
+        headers = {"Content-Type": "application/json", "X-FastInsight-Key": ingest_key}
+        payload = {"person": person, "item": item}
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/api/insight/publish",
-        data=json.dumps({"person": person, "item": item}, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-FastInsight-Key": ingest_key},
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
@@ -70,9 +80,8 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None):
         title = re.sub(r"https?://\S+", "", title).strip().splitlines()[0][:300] if title else "未命名论文"
         paper["title"] = title
     endpoint = endpoint or os.environ.get("FASTRESEARCH_URL", "http://127.0.0.1:8787")
-    ingest_key = ingest_key or os.environ.get("FASTINSIGHT_INGEST_KEY", "")
-    if not ingest_key:
-        raise ValueError("FASTINSIGHT_INGEST_KEY is required")
+    ingest_key = ingest_key if ingest_key is not None else os.environ.get("FASTINSIGHT_INGEST_KEY", "")
+    cas_config = service_configuration(ingest_key=ingest_key)
     roster_path = str(roster_path or os.environ.get("FASTINSIGHT_ROSTER", ROSTER_DEFAULT))
     with tempfile.TemporaryDirectory(prefix="fastinsight-") as temp_dir:
         temp = Path(temp_dir)
@@ -99,9 +108,14 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None):
         person = _text(owner.get("name")) if isinstance(owner, dict) else _text(owner)
         if not person:
             continue
+        receiver_ref = _text(owner.get("receiver_ref")) if isinstance(owner, dict) else ""
+        if cas_config and not receiver_ref:
+            errors.append(f"{person}: FastCAS 服务投递需要名册中的 receiver_ref")
+            continue
         try:
-            delivered.append(_publish(endpoint, ingest_key, person, paper, trends, direction))
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+            delivered.append(_publish(endpoint, ingest_key, person, paper, trends, direction,
+                                      cas_config=cas_config, receiver_ref=receiver_ref))
+        except (urllib.error.URLError, OSError, ValueError) as exc:
             errors.append(f"{person}: {exc}")
     return {"paper": paper, "route": route, "route_code": route_code, "delivered": delivered, "errors": errors}
 

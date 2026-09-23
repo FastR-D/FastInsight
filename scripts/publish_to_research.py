@@ -6,6 +6,8 @@ import os
 import urllib.error
 import urllib.request
 
+from service_auth import service_configuration, service_token
+
 
 def normalize(value):
     return "" if value is None else str(value).strip()
@@ -15,7 +17,10 @@ def main():
     parser = argparse.ArgumentParser(description="Publish FastInsight data to FastResearch")
     parser.add_argument("--paper", required=True, help="paper JSON or verify_paper output")
     parser.add_argument("--trends", help="optional trends JSON")
-    parser.add_argument("--person", required=True, help="FastResearch member name")
+    parser.add_argument("--person", default="", help="legacy FastResearch member name")
+    parser.add_argument("--receiver-ref", default="", help="stable FastResearch account ID for FastCAS service delivery")
+    parser.add_argument("--fastcas-issuer", default=os.environ.get("FASTINSIGHT_FASTCAS_ISSUER", ""))
+    parser.add_argument("--fastcas-client-id", default=os.environ.get("FASTINSIGHT_FASTCAS_CLIENT_ID", ""))
     parser.add_argument("--endpoint", default=os.environ.get("FASTRESEARCH_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--ingest-key", default=os.environ.get("FASTINSIGHT_INGEST_KEY", ""))
     parser.add_argument("--direction", default="")
@@ -38,11 +43,28 @@ def main():
     url = normalize(paper.get("url"))
     if not url and normalize(paper.get("doi")):
         url = f"https://doi.org/{normalize(paper['doi'])}"
-    payload = {"person": args.person, "item": {"id": normalize(paper.get("doi")) or url or title, "title": title, "summary": summary, "url": url, "direction": args.direction, "source": "FastInsight"}}
-    if not args.ingest_key:
-        parser.error("请提供 --ingest-key 或 FASTINSIGHT_INGEST_KEY")
+    item = {"id": normalize(paper.get("doi")) or url or title, "title": title, "summary": summary, "url": url, "direction": args.direction, "source": "FastInsight"}
+    try:
+        cas_config = service_configuration(args.fastcas_issuer, args.fastcas_client_id, args.ingest_key)
+    except ValueError as exc:
+        parser.error(str(exc))
+    headers = {"Content-Type": "application/json"}
+    if cas_config:
+        if not args.receiver_ref or args.person:
+            parser.error("FastCAS 服务投递需要 --receiver-ref，不能按姓名广播")
+        try:
+            token = service_token(cas_config, args.endpoint)
+        except ValueError as exc:
+            parser.error(str(exc))
+        headers["Authorization"] = "Bearer " + token
+        payload = {"receiver_ref": args.receiver_ref, "item": item}
+    else:
+        if not args.ingest_key or not args.person or args.receiver_ref:
+            parser.error("原 ingest key 模式需要 --person 和 --ingest-key，不能提供 --receiver-ref")
+        headers["X-FastInsight-Key"] = args.ingest_key
+        payload = {"person": args.person, "item": item}
     endpoint = args.endpoint.rstrip("/") + "/api/insight/publish"
-    request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers={"Content-Type": "application/json", "X-FastInsight-Key": args.ingest_key}, method="POST")
+    request = urllib.request.Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             print(response.read().decode("utf-8", "replace"))

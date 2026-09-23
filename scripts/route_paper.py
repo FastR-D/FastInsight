@@ -121,7 +121,11 @@ def _collect_valid_owners(value):
         if open_id in seen_ids:
             continue
         seen_ids.add(open_id)
-        valid.append({"name": name, "feishu_open_id": open_id})
+        entry = {"name": name, "feishu_open_id": open_id}
+        receiver_ref = _as_text(owner.get("receiver_ref")).strip()
+        if receiver_ref and not _is_placeholder(receiver_ref):
+            entry["receiver_ref"] = receiver_ref
+        valid.append(entry)
     return valid, invalid
 
 

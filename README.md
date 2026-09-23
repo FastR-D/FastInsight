@@ -46,6 +46,14 @@ python scripts/publish_to_research.py --paper paper.json --trends trends.json --
 
 服务端需设置同一个 `FASTINSIGHT_INGEST_KEY`。该凭证仅用于 FastInsight 到 FastResearch 的服务端发布，成员查看内容时只需要个人 Key。
 
+也可选用 FastCAS 服务身份向指定 FastResearch 账号投递。先在 FastCAS 注册允许 `client_credentials`、`insight:publish` scope、`research-api` audience 的服务客户端；FastResearch 配置 `FASTRESEARCH_FASTCAS_INGEST_ISSUER`、`FASTRESEARCH_FASTCAS_INGEST_CLIENT_ID` 和逗号分隔的 `FASTRESEARCH_FASTCAS_INGEST_ALLOWED_ACCOUNT_IDS`。FastInsight 安装可选 Python SDK（`pip install -e ../FastCAS/sdk/python`），设置 `FASTINSIGHT_FASTCAS_ISSUER`、`FASTINSIGHT_FASTCAS_CLIENT_ID`、`FASTINSIGHT_FASTCAS_CLIENT_SECRET`，并清空 `FASTINSIGHT_INGEST_KEY`。开发环回 HTTP 另需 `FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP=true` 与 Research 对应开关。
+
+```bash
+python scripts/publish_to_research.py --paper paper.json --receiver-ref 'FastResearch账号ID' --endpoint http://127.0.0.1:8787
+```
+
+自动分拣及飞书长连接复用这些环境变量；每位收件人的名册条目还需填写 `receiver_ref`。缺少该 ID 的负责人会记入投递错误，不会退回同名匹配。FastResearch 会按服务客户端、scope、audience 和收件人白名单再次验证。原 ingest key 模式保持可用，两种凭证不能混用；令牌获取或投递失败不自动降级。
+
 ### 飞书长连接自动接入
 
 桥接服务使用飞书官方长连接（WebSocket）接收 `im.message.receive_v1` 事件。FastInsight 主动连接飞书，因此不需要公网回调地址、Nginx 或 HTTPS Webhook：
@@ -135,6 +143,7 @@ directions:
     owners:
       - name: "张三"
         feishu_open_id: "ou_real_id"
+        receiver_ref: "FastResearch账号ID"  # 仅 FastCAS 服务身份投递需要
 
 default_owner:
   name: "组长"
@@ -148,6 +157,7 @@ default_owner:
 - `priority` 用于关键词分数相同的方向
 - 缺少有效负责人时，会尝试使用 `default_owner`
 - 占位符或空的 `feishu_open_id` 不会被发送
+- `receiver_ref` 是目标 FastResearch 的稳定本地账号 ID，不是姓名、邮箱或飞书 open_id；名册本身不构成账号绑定证明
 
 ## 可选环境变量
 
