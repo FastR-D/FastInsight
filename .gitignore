@@ -1,27 +1,28 @@
 # Python
-.env
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
-
-# Virtual envs
+.venv/
 venv/
 env/
-.venv/
+
+# Secrets and local env
+.env
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 .DS_Store
 
-# Logs and temp
+# Runtime
 *.log
-*.tmp
-*.bak
-
-# Runtime artifacts
-feishu_card_payload_*.json
+*.pid
+.pending-capture.json
+.pending-capture.json.lock
+.captures/
+work_paper.json
+verify_out.json
+trends.json
+feishu_card_payload.json

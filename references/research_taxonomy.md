@@ -9,6 +9,10 @@ and mixed-language keywords use phrase matching.
 > Tip: keep keywords specific. Token boundaries prevent `RL` from matching
 > "URL", but short acronyms can still be ambiguous in abstracts.
 
+Every direction with at least one matching keyword is routed. Owners from all
+matching directions are merged and deduplicated by name, so one paper can be
+published to several colleagues while the same colleague receives it only once.
+
 ## Natural Language Processing / LLM
 - keywords: LLM, large language model, GPT, instruction tuning, RLHF, prompt,
   chain-of-thought, pre-train, chatbot, 大语言模型, 预训练, 指令微调, 对齐

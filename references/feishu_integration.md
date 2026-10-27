@@ -1,33 +1,26 @@
 # Feishu (Lark) Integration Reference
 
-FastInsight can run as a self-hosted Feishu bot using the official long-lived
-connection. This page documents (1) the connector-based flow used by the skill,
-(2) long connection mode, and (3) the raw webhook API for teams that need it.
+FastInsight can receive paper screenshots and links from Feishu, but it **does
+not forward interactive cards to owners**. Delivery is FastResearch only. This
+page documents (1) Feishu as an input channel, (2) long connection mode, and
+(3) optional raw API notes if you still need source-chat confirmation.
 
-## 1. Connector-based flow (optional)
+## 1. Connector-based flow (input only)
 
-1. In WorkBuddy, open the connector panel and enable **飞书 (Feishu)**. Follow the
-   OAuth/login prompt to link your Feishu account / tenant.
-2. Once connected, WorkBuddy can:
-   - **Receive** messages posted to a group where the bot is a member, including
-     images (screenshots) and their captions.
-   - **Send** messages to a user or group, addressed by `open_id` (the stable
-     per-tenant user id), or by `chat_id` for groups.
-3. When a screenshot arrives, follow the SKILL.md workflow: read the image →
-   `verify_paper.py` → `analyze_trends.py` → `route_paper.py` → send the card to each matched owner's
-   `open_id` → confirm in the group.
+1. In WorkBuddy / OpenClaw, enable **飞书 (Feishu)** and link the tenant.
+2. Once connected, the bot can **receive** group messages, including images
+   (screenshots) and captions. With `groupPolicy: "open"`, `requireMention`
+   defaults to false so a follow-up image (which cannot carry an @mention)
+   still reaches the agent.
+3. Users trigger the bot with a standalone `@fastinsight` (a Feishu
+   mention whose name is FastInsight, or the literal text). Do not require a long prompt, and do not require the
+   command and screenshot in the same message. The bot arms capture and reads
+   the **next** image or paper URL in that chat.
+4. After FastResearch publish succeeds, a short confirmation in the **source
+   chat** is allowed. Do not send owner cards. Do not 私聊 / DM owners.
 
-### Getting a teammate's `open_id`
-
-`open_id` is required for routing. Common ways to obtain it:
-
-- **Feishu admin console** → Contacts → user → the id shown in the URL / detail
-  panel (starts with `ou_`).
-- **Bot API**: call `GET /open-apis/contact/v3/users` (needs contact:user
-  read scope) and map by name/email to `open_id`.
-- **Simplest for a small team**: ask each person to @-mention the bot once; the
-  bot's incoming message event includes their `sender.sender_id.open_id`. Record
-  those into `colleagues.yaml`.
+Owner `name` in `colleagues.yaml` is the FastResearch `person`. `feishu_open_id`
+is optional and unused for delivery.
 
 ## 2. Long connection mode (self-hosting)
 
@@ -42,30 +35,32 @@ WebSocket connection. Configure the app in the Feishu developer console:
 
 No public request URL or `FEISHU_VERIFICATION_TOKEN` is needed. The SDK handles
 connection heartbeats and reconnects. The bridge dispatches text/link messages
-to `auto_pipeline.py`; image messages require an OCR or multimodal step before
-they can be processed.
+to `auto_pipeline.py` (FastResearch publish). Image messages require `@fastinsight` first, then the next image is captured
+in the same turn via `pending_capture.py wait` (Feishu message list + inbound
+media).
 
-## 3. Raw Feishu Open API (webhook self-hosting)
+## 3. Raw Feishu Open API (optional source-chat confirm)
 
-Use this only if you run your own service instead of the connector.
+Use this only if you send a confirmation back to the source group. Do not use
+it to forward cards to owners.
 
 ### App setup
 - Create an app at <https://open.feishu.cn> (international: <https://www.feishu.com>)
-  → add the **bot** capability → enable needed scopes:
-  - `im:message` (send messages)
+  → add the **bot** capability → enable needed scopes **and publish a new version**.
+  Checking a scope in 权限管理 does nothing until 版本管理 creates and publishes a version (tenant apps may also need admin review):
+  - `im:message` (send the wait prompt and source-chat confirmation)
   - `im:message:receive` (receive group messages, for event subscription)
-  - `contact:user.base:readonly` (lookup open_id by name)
-- Event subscription: subscribe to `im.message.receive_v1`. Feishu will POST
-  message events to your `request_url`; verify the URL with the challenge handshake.
+  - `im:message.group_msg` (**required** to `GET /im/v1/messages` in a group; without it wait cannot see the next unmentioned screenshot)
+  - `im:resource` (download image bytes from a message)
+- Event subscription: subscribe to `im.message.receive_v1`.
+- Optional: enable 「接收群聊中的所有消息」 so unmentioned group images also reach OpenClaw inbound. `requireMention: false` alone is not enough if Feishu never delivers the event.
 
 ### Get tenant access token
 ```
 POST https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal
 Content-Type: application/json
 { "app_id": "<APP_ID>", "app_secret": "<APP_SECRET>" }
-# -> { "tenant_access_token": "...", "expire": 7200 }
 ```
-Pass it as `Authorization: Bearer <token>` on subsequent calls.
 
 ### Receive a message event (excerpt)
 ```json
@@ -81,34 +76,22 @@ Pass it as `Authorization: Bearer <token>` on subsequent calls.
 }
 ```
 - For an `image` message, download it via
-  `GET /open-apis/im/v1/images/{image_key}?type=message` (header
-  `Authorization: Bearer <token>`). Then run the image through the multimodal
-  read step.
+  `GET /open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image`
+  (fallback: `GET /open-apis/im/v1/images/{image_key}`) after `@fastinsight`
+  starts `wait`. Listing uses
+  `GET /open-apis/im/v1/messages?container_id_type=chat&container_id=...`.
+  A 400 with Feishu `code=230027` and `need scope: im:message.group_msg` means
+  the app cannot read group history; `pending_capture.py` keeps that `code/msg`
+  in `warnings` / `missing_scopes` instead of a bare `HTTP Error 400`.
 
-### Send an interactive card to a user
-```
-POST https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id
-Authorization: Bearer <token>
-Content-Type: application/json
-{
-  "receive_id": "<owner_open_id>",
-  "msg_type": "interactive",
-  "content": "<the JSON card from feishu_card.json, as a stringified JSON>"
-}
-```
-Note: `content` must be a **JSON string**, not an object — `json.dumps(card)`.
-
-### Send a confirmation back to the group
-Same endpoint with `receive_id` = the group `chat_id` and `receive_id_type=chat_id`,
-or `msg_type: "text"`:
+### Optional confirmation back to the group
+Same endpoint with `receive_id` = the group `chat_id` and
+`receive_id_type=chat_id`:
 ```json
 { "receive_id": "<chat_id>", "msg_type": "text",
-  "content": "{\"text\":\"✅ 已将《标题》分拣至【方向】，转发给 @张三、@李四。\"}" }
+  "content": "{\"text\":\"✅ 已将《标题》分拣至【方向】，并已发布至 FastResearch。\"}" }
 ```
 
-## 4. Card shape
-
-The forward card is an interactive card (see `assets/feishu_card.json`). Key
-fields: `header.template` (color), `elements[].tag` (`div`, `note`, `action`),
-and a `button` action with `url` to open the paper. Buttons open URLs in a new
-tab; they do not require extra scopes.
+`scripts/send_feishu_card.py` now refuses to send. `assets/feishu_card.json`
+remains on disk for compatibility only. The current skill must not send owner
+cards or owner DMs.

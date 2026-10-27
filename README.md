@@ -1,206 +1,118 @@
-# FastInsight
+# FastInsight Feishu Bot
 
-FastInsight 是一个用于 Feishu/Lark 群聊的论文与研究资讯自动分拣 skill。
-它可以识别论文截图或链接，补充学术元数据，分析引用与相关工作，按研究方向
-匹配负责人，并生成 Feishu 交互卡片。
+把 OpenClaw FastInsight skill 里的**飞书输入通道**单拎出来：只用飞书官方 Python SDK（`lark-oapi`）的 **WebSocket 长连接** 接收 `im.message.receive_v1`，在源会话里通过 `@fastinsight` 开启前后 1 分钟的图片批处理。
 
-## 快速开始
+这是单一功能，不是 OpenClaw 本体：
 
-### 1. 准备环境
+- 不私聊 / DM 负责人
+- 不给负责人发飞书卡片
+- 识别 → 学术验证 → 趋势分析 → 多方向分类 → **只发布到 FastResearch**
+- 所有命中方向的负责人都会收到同一篇论文；同一人跨方向命中时只发布一次
+- 成功后只在**源会话**回一条短确认
 
-- Python 3.8 或更高版本
-- 已创建并启用飞书自建应用（机器人能力）
-- 已安装 `lark-oapi`：`pip install -r requirements.txt`
-- 一份包含真实 `feishu_open_id` 的负责人名册
+不需要公网 webhook。SDK 负责心跳和重连。
 
-复制名册模板并填写真实信息：
+## 和 OpenClaw skill 的对应关系
 
-```powershell
-Copy-Item assets\colleagues.yaml.example colleagues.yaml
-python scripts\validate_roster.py colleagues.yaml
-```
+| OpenClaw FastInsight | 本仓库 |
+| --- | --- |
+| `scripts/feishu_bridge.py` | `fastinsight/bot.py`（长连接入口，已补全 `@fastinsight` 状态机） |
+| `scripts/pending_capture.py wait --notify` | 长连接事件 + 前后 1 分钟群历史轮询 |
+| `scripts/verify_paper.py` 等 | `scripts/` 原样拷贝 |
+| 源会话确认 | `FeishuApp.send_text()`（原生 SDK） |
 
-如果已有配置好的名册，也可以直接使用：
+群未 @ 的纯图片经常不会推送给机器人。发送 `@fastinsight` 后，bot 会处理该消息**前 1 分钟到后 1 分钟**内的所有图片和链接，并用 `GET /im/v1/messages` 轮询兜底。纯链接消息按优先级选择一条论文链接；图片附链接时按一个图片处理项分发，链接用于识别和补全元数据，避免同一论文重复发布。同一图片按 `image_key` 去重；超过时间窗的消息不再处理。
 
-```powershell
-python scripts\validate_roster.py assets\colleagues.yaml
-```
+## 飞书开放平台
 
-### 2. 在对话中使用
+1. 创建企业自建应用，打开机器人能力。
+2. 权限管理勾选后必须到 **版本管理 → 创建版本并发布**（只勾选不发布不会生效）：
+   - `im:message` 源会话提示 / 确认
+   - `im:message:receive` 接收消息事件
+   - `im:message.group_msg` **读取群历史**（没有它就看不到未 @ 的下一张图）
+   - `im:resource` 下载消息图片
+   - 可选 `optical_char_recognition:image` 飞书 OCR
+3. 事件订阅选择 **使用长连接接收事件**，订阅 `im.message.receive_v1`。
+4. 如需群里未 @ 的图片也走事件推送，打开「接收群聊中的所有消息」。
 
-显式调用 skill：
+同一飞书应用的长连接通常只能有一条。启动前请停掉 OpenClaw 飞书通道和旧的 `feishu_bridge.py`，否则会 `EXCEED_CONN_LIMIT`。
 
-```text
-$fastinsight 处理这张论文截图，识别论文、分析研究方向，并转发给对应同事。
-```
-
-## 联动 FastResearch
-
-FastResearch 的四个项目入口均可直接访问，不再使用按入口分发的 Token。阅读整合和 FastInsight 信息存放在 FastResearch 的个人 Key 工作区中。管理员在 FastResearch 后台按成员姓名生成个人 Key 后，将 Key 单独发送给成员。
-
-处理完成后可将结果发布到对应成员：
-
-```bash
-python scripts/publish_to_research.py --paper paper.json --trends trends.json --person "成员姓名" --endpoint http://127.0.0.1:8787 --ingest-key "$env:FASTINSIGHT_INGEST_KEY"
-```
-
-服务端需设置同一个 `FASTINSIGHT_INGEST_KEY`。该凭证仅用于 FastInsight 到 FastResearch 的服务端发布，成员查看内容时只需要个人 Key。
-
-也可选用 FastCAS 服务身份向指定 FastResearch 账号投递。先在 FastCAS 注册允许 `client_credentials`、`insight:publish` scope、`research-api` audience 的服务客户端；FastResearch 配置 `FASTRESEARCH_FASTCAS_INGEST_ISSUER`、`FASTRESEARCH_FASTCAS_INGEST_CLIENT_ID` 和逗号分隔的 `FASTRESEARCH_FASTCAS_INGEST_ALLOWED_ACCOUNT_IDS`。FastInsight 安装可选 Python SDK（`pip install -e ../FastCAS/sdk/python`），设置 `FASTINSIGHT_FASTCAS_ISSUER`、`FASTINSIGHT_FASTCAS_CLIENT_ID`、`FASTINSIGHT_FASTCAS_CLIENT_SECRET`，并清空 `FASTINSIGHT_INGEST_KEY`。开发环回 HTTP 另需 `FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP=true` 与 Research 对应开关。
+## 运行
 
 ```bash
-python scripts/publish_to_research.py --paper paper.json --receiver-ref 'FastResearch账号ID' --endpoint http://127.0.0.1:8787
+cd /home/dev/fastinsight
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env   # 填入 FEISHU_APP_ID / FEISHU_APP_SECRET / FastResearch 配置
+./run.sh
 ```
 
-自动分拣及飞书长连接复用这些环境变量；每位收件人的名册条目还需填写 `receiver_ref`。缺少该 ID 的负责人会记入投递错误，不会退回同名匹配。FastResearch 会按服务客户端、scope、audience 和收件人白名单再次验证。原 ingest key 模式保持可用，两种凭证不能混用；令牌获取或投递失败不自动降级。
+`run.sh` 优先用本仓库 `.venv`，若尚未装好 `lark-oapi` 会回退到 OpenClaw FastInsight skill 的 venv。
 
-### 飞书长连接自动接入
+探测群历史权限：
 
-桥接服务使用飞书官方长连接（WebSocket）接收 `im.message.receive_v1` 事件。FastInsight 主动连接飞书，因此不需要公网回调地址、Nginx 或 HTTPS Webhook：
-
-```powershell
-$env:FASTRESEARCH_URL = "http://127.0.0.1:8787"
-$env:FASTINSIGHT_INGEST_KEY = "your-service-key"
-$env:FEISHU_APP_ID = "cli_xxxxxxxxxxxxx"
-$env:FEISHU_APP_SECRET = "your-feishu-app-secret"
-python scripts\feishu_bridge.py
+```bash
+.venv/bin/python feishu_bot.py --check oc_xxxxxxxxxxxxx
 ```
 
-在飞书开发者后台为应用启用机器人能力，事件订阅选择“使用长连接接收事件”，订阅 `im.message.receive_v1`，并授予接收消息所需权限。启动脚本后会自动重连；普通文本和链接会自动进入识别、验证、趋势分析、方向分拣和 FastResearch 发布流程。截图消息仍需要上游 OCR/多模态识别后再交给 `auto_pipeline.py`。
+群里：
 
-也可以发送论文链接：
-
-```text
-使用 FastInsight 分拣这篇论文，并附上引用趋势摘要：
-https://example.com/paper
+```
+@fastinsight
+# bot 开启前后 1 分钟的图片批处理
+# 会处理命令前 1 分钟、命令附件和命令后 1 分钟内的图片与链接
 ```
 
-典型流程为：
+带 URL 可跳过等待：
 
-`识别 → 学术验证 → 趋势分析 → 方向分类 → 生成卡片 → 转发 → 群内确认`
-
-如果是新闻或行业资讯，FastInsight 会使用标题、描述和链接进行分拣，默认跳过
-论文验证与引用分析。
-
-## 命令行流程
-
-### 论文验证
-
-```powershell
-python scripts\verify_paper.py --query "Attention Is All You Need" --json-out paper.json
+```
+@fastinsight https://arxiv.org/abs/1706.03762
+@fastinsight https://mp.weixin.qq.com/s/...
+@fastinsight http://xhslink.com/o/...
 ```
 
-输出包含：
+图片无需同时包含论文标题和链接。FastInsight 会从截图正文推断论文正式标题或高区分度检索词，
+再通过 Crossref、OpenAlex、Semantic Scholar、arXiv 和网页搜索查找对应论文。
 
-- `best`：最匹配的论文
-- `candidates`：候选结果
-- `source`：数据来源
-- `warnings`：失败或降级的 API
+论文分发先匹配 `colleagues.yaml` 中的关键词；所有命中方向的负责人共同接收。关键词全部未命中时，
+LLM 会根据人员研究方向进行保守的语义分发。默认置信度阈值为 `0.75`，可通过
+`FASTINSIGHT_SEMANTIC_ROUTING_THRESHOLD` 调整；低于阈值或 LLM 不可用时发送给 `default_owner`。
 
-### 趋势分析
+微信公众号、小红书链接会先读取正文，从中识别 DOI / arXiv / 论文标题，再走学术验证。正文里没有论文链接时，若配置了 `OPENAI_API_KEY`，会用 LLM 从文章里抽取论文元数据。
 
-```powershell
-python scripts\analyze_trends.py --paper paper.json --json-out trends.json
+取消：
+
+```
+@fastinsight cancel
 ```
 
-该步骤会尝试获取引用数、研究领域、相关论文和简短趋势摘要。API 不可用时，
-流程仍然可以继续。
+## 环境变量
 
-### 预览路由结果
+必填：
 
-```powershell
-python scripts\route_paper.py --paper paper.json --roster colleagues.yaml --trends trends.json --dry-run
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
+- `FASTRESEARCH_URL`（默认 `http://127.0.0.1:8787`）
+- `FASTINSIGHT_INGEST_KEY`
+- `FASTINSIGHT_ROSTER`（默认 `assets/colleagues.yaml`）
+
+强烈建议（截图理解和 2–5 句趋势分析）：
+
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`（兼容 OpenAI 的网关即可）
+- `OPENAI_MODEL` / `VISION_MODEL`
+
+没有视觉模型时，会尝试飞书 OCR；单张图片仍无法识别时会返回该图片的处理错误，但不会重复处理。没有 LLM 时不会发布（skill 禁止「暂无趋势数据」）。
+
+## 目录
+
 ```
-
-重点检查输出中的：
-
-- `matched_direction`：匹配到的研究方向
-- `hits`：命中的关键词
-- `owners`：将接收卡片的负责人
-- `fallback`：是否使用了兜底负责人
-- `routable`：是否具备有效的 Feishu ID
-
-确认无误后，去掉 `--dry-run`：
-
-```powershell
-python scripts\route_paper.py --paper paper.json --roster colleagues.yaml --trends trends.json
+feishu_bot.py          # 入口
+fastinsight/bot.py     # 长连接 + @fastinsight 状态机
+fastinsight/feishu_api.py
+fastinsight/capture.py
+fastinsight/parse.py
+fastinsight/article.py
+fastinsight/pipeline.py
+scripts/               # 从 OpenClaw skill 拷贝的验证 / 路由 / 发布
+assets/colleagues.yaml
 ```
-
-命令行脚本只负责生成 `feishu_card_payload.json`，不会直接发送消息。连接
-Feishu 后，由 skill 使用 connector 将卡片发送给 `owners` 中的负责人，并在原群
-中发送确认消息。
-
-## 名册格式
-
-```yaml
-directions:
-  - name: "网络安全 / AI安全"
-    priority: 10
-    keywords:
-      - "privacy-preserving"
-      - "secure inference"
-      - "隐私计算"
-    owners:
-      - name: "张三"
-        feishu_open_id: "ou_real_id"
-        receiver_ref: "FastResearch账号ID"  # 仅 FastCAS 服务身份投递需要
-
-default_owner:
-  name: "组长"
-  feishu_open_id: "ou_real_id"
-```
-
-说明：
-
-- 关键词匹配 `标题 + 摘要 + venue`
-- ASCII 关键词使用 token 边界，避免 `RL` 匹配到 `URL`
-- `priority` 用于关键词分数相同的方向
-- 缺少有效负责人时，会尝试使用 `default_owner`
-- 占位符或空的 `feishu_open_id` 不会被发送
-- `receiver_ref` 是目标 FastResearch 的稳定本地账号 ID，不是姓名、邮箱或飞书 open_id；名册本身不构成账号绑定证明
-
-## 可选环境变量
-
-```powershell
-$env:S2_API_KEY = "your-semantic-scholar-key"
-$env:CROSSREF_MAILTO = "you@example.com"
-```
-
-- `S2_API_KEY`：提高 Semantic Scholar API 的请求额度
-- `CROSSREF_MAILTO`：使用 Crossref polite pool
-
-## 常见问题
-
-### `routable` 为 `false`
-
-运行 roster 校验，确认方向负责人或 `default_owner` 使用真实的
-`feishu_open_id`：
-
-```powershell
-python scripts\validate_roster.py colleagues.yaml
-```
-
-### 学术 API 不可用
-
-保留截图中读取到的论文标题、作者和链接，并在群内说明引用数据暂不可用。
-不要把 API 返回的候选结果当作已确认论文。
-
-### 方向匹配不准确
-
-为对应方向增加更有区分度的关键词，必要时配置 `priority`，然后重新执行
-`route_paper.py --dry-run` 预览。
-
-## 目录说明
-
-- `SKILL.md`：Codex 使用的 skill 行为规范
-- `agents/openai.yaml`：UI 展示信息
-- `scripts/`：验证、趋势分析、路由和名册校验脚本
-- `references/`：Feishu 集成、学术搜索和研究方向说明
-- `assets/`：卡片模板和名册模板
-
-## 安全注意事项
-
-- 首次上线或修改名册后，先使用 `--dry-run`
-- 不向缺失或占位 `open_id` 发送消息
-- 图片不清晰或包含多篇论文时，先向发送者确认
-- 默认只转发论文元数据和链接，不转发发送者身份

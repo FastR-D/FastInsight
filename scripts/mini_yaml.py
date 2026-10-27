@@ -4,9 +4,10 @@ Supports the subset used by colleagues.yaml:
   * mappings (key: value) with indentation-based nesting
   * sequences (- item) of scalars or mappings
   * quoted ("..." / '...') and plain scalars, ints, floats, booleans, null
+  * simple flow lists/maps ([] / {})
   * comments (# ...) and blank lines
 
-Does NOT support: flow style ([] / {}), anchors, multiline block scalars.
+Does NOT support: anchors, multiline block scalars.
 If PyYAML is installed it is preferred; this is only the zero-dependency fallback.
 """
 import re
@@ -114,6 +115,10 @@ class _Parser:
         s = s.strip()
         if s == "" or s in ("null", "~"):
             return None
+        if (s.startswith("[") and s.endswith("]")) or (
+            s.startswith("{") and s.endswith("}")
+        ):
+            return _parse_flow(s)
         if (s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'"):
             return s[1:-1]
         low = s.lower()
@@ -130,6 +135,49 @@ class _Parser:
         except ValueError:
             pass
         return s
+
+
+def _split_flow_items(value):
+    items = []
+    start = 0
+    depth = 0
+    quote = None
+    for index, char in enumerate(value):
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(value[start:index].strip())
+            start = index + 1
+    tail = value[start:].strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _parse_flow(value):
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        return [] if not inner else [_Parser._scalar(item) for item in _split_flow_items(inner)]
+    if value.startswith("{") and value.endswith("}"):
+        inner = value[1:-1].strip()
+        result = {}
+        if not inner:
+            return result
+        for item in _split_flow_items(inner):
+            key, rest = _Parser._split_kv(item)
+            if not key:
+                raise ValueError("invalid flow mapping")
+            result[key] = _Parser._scalar(rest)
+        return result
+    return _Parser._scalar(value)
 
 
 def _strip_comment(line):

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Validate the colleagues.yaml roster used by FastInsight.
 
-Checks structure, required fields, placeholder Feishu IDs, duplicate direction
-names, duplicate keywords, and duplicate owners within a direction.
+Checks structure, required names, duplicate direction names, duplicate
+keywords, and duplicate owners within a direction. Missing Feishu open_id
+values are warnings because FastInsight publishes by person name to
+FastResearch and no longer forwards Feishu cards internally.
 """
 import argparse
 import os
@@ -37,7 +39,7 @@ def _is_placeholder(value):
     )
 
 
-def _validate_owner(owner, tag, errors, seen_ids=None):
+def _validate_owner(owner, tag, errors, warnings, seen_ids=None):
     if not isinstance(owner, dict):
         errors.append(f"{tag}: 必须是 mapping")
         return
@@ -46,8 +48,9 @@ def _validate_owner(owner, tag, errors, seen_ids=None):
     if not name:
         errors.append(f"{tag}: 缺少 name")
     if _is_placeholder(open_id):
-        errors.append(
-            f"{tag} ({name or '未命名'}): feishu_open_id 缺失或为占位符，请填写真实 open_id"
+        warnings.append(
+            f"{tag} ({name or '未命名'}): feishu_open_id 缺失或为占位符；"
+            "FastResearch 仅按姓名投递，可忽略"
         )
     elif seen_ids is not None:
         if open_id in seen_ids:
@@ -131,6 +134,7 @@ def main():
                         owner,
                         f"{tag}.owners[{owner_index}]",
                         errors,
+                        warnings,
                         seen_direction_ids,
                     )
                 for open_id, count in seen_direction_ids.items():
@@ -143,7 +147,7 @@ def main():
     if default_owner is None:
         warnings.append("未配置 default_owner：没有方向命中时将无法自动兜底")
     else:
-        _validate_owner(default_owner, "default_owner", errors)
+        _validate_owner(default_owner, "default_owner", errors, warnings)
 
     if errors:
         print("❌ ERRORS:")

@@ -4,7 +4,8 @@
 # 用法：复制本文件为 colleagues.yaml，填入你们团队的真实信息。
 # 每个 direction 的 keywords 用于自动匹配论文标题/摘要，命中越多分越高。
 # 可选 priority 用于同分时明确指定优先级，数值越大越优先。
-# owners 是收到该方向论文的同学（飞书 open_id，见 feishu_integration.md 获取）。
+# owners.name 是 FastResearch 投递对象（必填）。feishu_open_id 可选，当前
+# 工作流不再向飞书负责人转发卡片。
 # 没有任何方向命中时，会 fallback 到 default_owner（可选，留空则提示人工处理）。
 # 修改后运行：python scripts/validate_roster.py colleagues.yaml
 # ============================================================================
