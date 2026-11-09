@@ -29,11 +29,11 @@ JINA_PREFIX = "https://r.jina.ai/"
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s<>\"']+", re.IGNORECASE)
 ARXIV_LABEL_RE = re.compile(
     r"(?:https?://)?arxiv\.org/(?:abs|pdf)/"
-    r"([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{5}(?:v\d+)?)|"
-    r"arXiv:\s*([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{5}(?:v\d+)?)",
+    r"([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{4,5}(?!\d)(?:v\d+)?)|"
+    r"arXiv:\s*([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{4,5}(?!\d)(?:v\d+)?)",
     re.IGNORECASE,
 )
-ARXIV_BARE_RE = re.compile(r"(?<![\w./])(\d{4}\.\d{5}(?:v\d+)?)(?![\w.])")
+ARXIV_BARE_RE = re.compile(r"(?<![\w./])(\d{4}\.\d{4,5}(?:v\d+)?)(?![\w.])")
 WECHAT_BLOCKED = ("环境异常", "当前环境异常", "完成验证后即可继续", "security verify")
 SHARE_PATTERNS = (
     re.compile(r"复制后打开【小红书】查看笔记[！!]?", re.I),

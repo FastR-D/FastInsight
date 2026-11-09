@@ -110,12 +110,12 @@ ARXIV_ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s<>\"']+", re.IGNORECASE)
 ARXIV_LABEL_RE = re.compile(
     r"(?:https?://)?arxiv\.org/(?:abs|pdf)/"
-    r"([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{5}(?:v\d+)?)|"
-    r"arXiv:\s*([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{5}(?:v\d+)?)",
+    r"([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{4,5}(?!\d)(?:v\d+)?)|"
+    r"arXiv:\s*([a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?|\d{4}\.\d{4,5}(?!\d)(?:v\d+)?)",
     re.IGNORECASE,
 )
 ARXIV_BARE_RE = re.compile(
-    r"(?<![\w./])(\d{4}\.\d{5}(?:v\d+)?)(?![\w.])"
+    r"(?<![\w./])(\d{4}\.\d{4,5}(?:v\d+)?)(?![\w.])"
 )
 
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastinsight.article import (
     clean_share_text,
@@ -82,6 +82,51 @@ class ArticleParseTests(unittest.TestCase):
         found = extract_identifiers("see arXiv:1706.03762 and https://doi.org/10.1000/xyz")
         self.assertEqual(found["arxiv_id"], "1706.03762")
         self.assertEqual(found["doi"], "10.1000/xyz")
+
+    def test_body_identifiers_produce_canonical_arxiv_url(self) -> None:
+        for arxiv_id in ("1409.0473", "1409.0473v2", "1706.03762", "1706.03762v2"):
+            for label in ("", "arXiv:"):
+                with self.subTest(arxiv_id=arxiv_id, label=label):
+                    html = (
+                        '<html><title>论文介绍</title><div id="js_content">'
+                        f"本文介绍预印本 {label}{arxiv_id} 的研究成果。"
+                        "</div></html>"
+                    )
+                    llm = Mock(return_value=None)
+                    with patch("fastinsight.article.fetch_html") as fetch:
+                        paper = extract_paper_from_article(
+                            "https://mp.weixin.qq.com/s/abc", html=html, llm=llm
+                        )
+                    self.assertEqual(paper["arxiv_id"], arxiv_id)
+                    self.assertEqual(paper["url"], f"https://arxiv.org/abs/{arxiv_id}")
+                    self.assertTrue(paper["paper_found"])
+                    fetch.assert_not_called()
+                    llm.assert_not_called()
+
+    def test_body_doi_still_takes_priority_over_arxiv(self) -> None:
+        html = (
+            '<html><title>论文介绍</title><div id="js_content">'
+            "arXiv:1409.0473v2 DOI: 10.1000/ABC;"
+            "</div></html>"
+        )
+        paper = extract_paper_from_article("https://mp.weixin.qq.com/s/abc", html=html)
+        self.assertEqual(paper["arxiv_id"], "1409.0473v2")
+        self.assertEqual(paper["doi"], "10.1000/abc")
+        self.assertEqual(paper["url"], "https://doi.org/10.1000/abc")
+        self.assertTrue(paper["paper_found"])
+
+    def test_existing_pdf_url_still_takes_priority_over_doi(self) -> None:
+        url = "https://arxiv.org/pdf/1409.0473v2.pdf"
+        html = (
+            '<html><title>论文介绍</title><div id="js_content">'
+            f'<a href="{url}">论文</a> DOI: 10.1000/ABC;'
+            "</div></html>"
+        )
+        paper = extract_paper_from_article("https://mp.weixin.qq.com/s/abc", html=html)
+        self.assertEqual(paper["arxiv_id"], "1409.0473v2")
+        self.assertEqual(paper["doi"], "10.1000/abc")
+        self.assertEqual(paper["url"], url)
+        self.assertTrue(paper["paper_found"])
 
 
 class PaperFromUrlTests(unittest.TestCase):
