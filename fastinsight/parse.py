@@ -320,12 +320,13 @@ class ParsedMessage:
 
 
 def _sender_id(sender: Dict[str, Any]) -> str:
-    sender_id = str(sender.get("id") or sender.get("sender_id") or "").strip()
-    if sender_id:
-        return sender_id
-    nested = sender.get("sender_id")
-    if isinstance(nested, dict):
-        return str(nested.get("open_id") or nested.get("user_id") or "").strip()
+    for value in (sender.get("id"), sender.get("sender_id")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            nested = value.get("open_id") or value.get("user_id")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
     return ""
 
 

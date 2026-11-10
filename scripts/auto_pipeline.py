@@ -31,9 +31,13 @@ def _text(value):
 
 
 def _verification_query(paper, title):
-    """Combine identifiers with the best available title or content search query."""
+    """Keep supplied locator evidence while adding the best search text."""
     search_query = _text(paper.get("search_query"))
-    pieces = [search_query or _text(title)]
+    url = _text(paper.get("url"))
+    search_text = search_query or _text(title)
+    pieces = [url]
+    if search_text and search_text != url:
+        pieces.append(search_text)
     doi = _text(paper.get("doi"))
     arxiv_id = _text(paper.get("arxiv_id"))
     if doi:
@@ -178,7 +182,7 @@ def enrich_paper(paper):
     search_query = _text(paper.get("search_query"))
     content_query = _text(paper.get("text"))[:500]
     paper = _normalize_paper(paper)
-    query = search_query or source_title or content_query
+    query = search_query or source_title or content_query or _text(paper.get("url"))
     if not query:
         return paper
     with tempfile.TemporaryDirectory(prefix="fastinsight-verify-") as temp_dir:
