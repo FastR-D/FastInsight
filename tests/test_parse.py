@@ -18,6 +18,18 @@ from fastinsight.pipeline import confirmation_text
 
 
 class ParseTests(unittest.TestCase):
+    def test_nested_sender_id_is_normalized_without_dict_repr(self) -> None:
+        parsed = parse_event(
+            {
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_nested", "user_id": "u_nested"}},
+                    "message": {"content": '{"text":"hello"}'},
+                }
+            }
+        )
+        self.assertEqual(parsed.sender_id, "ou_nested")
+        self.assertNotIn("{", parsed.sender_id)
+
     def test_command_with_mention(self) -> None:
         parsed = parse_feishu_message(
             {
