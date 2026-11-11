@@ -1,0 +1,78 @@
+name: Validate and deploy FastInsight
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    concurrency:
+      group: validate-fastinsight-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --target vendor -r requirements.txt -r requirements-fastcas.txt
+      - run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: vendor
+      - name: Checkout pinned FastDeploy packager
+        uses: actions/checkout@v4
+        with:
+          repository: FastR-D/FastDeploy
+          ref: fb455c57d06cc7d8d9bd3b3fb505e65270caa260
+          path: .fastdeploy-tools
+          persist-credentials: false
+      - name: Package the tested runtime
+        run: python3 .fastdeploy-tools/scripts/package.py fastinsight --output "$RUNNER_TEMP/fastinsight-release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: ${{ runner.temp }}/fastinsight-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: validate
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: FastR-D/FastDeploy/.github/workflows/deploy.yml@fb455c57d06cc7d8d9bd3b3fb505e65270caa260
+    with:
+      app: fastinsight
+      artifact-name: release-${{ github.sha }}
+      # These values are literal KEY=value entries; do not add shell quotes.
+      # Code-relative paths are supplied by the trusted FastDeploy server profile.
+      runtime-env: |
+        FASTINSIGHT_ALLOW_LEGACY_INGEST_KEY=false
+        FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP=false
+        FASTINSIGHT_FASTCAS_CLIENT_ID=fastinsight
+        FASTINSIGHT_FASTCAS_ISSUER=https://cas.fastrd.io
+        FASTINSIGHT_ROSTER=/home/dev/fastinsight/assets/colleagues.yaml
+        FASTINSIGHT_STATE_DIR=/home/dev/fastinsight
+        FASTRESEARCH_URL=http://127.0.0.1:8787
+        OPENAI_BASE_URL=https://api.deepseek.com
+        OPENAI_MODEL=deepseek-flash
+    secrets:
+      SSH_HOST: ${{ secrets.FASTRD_SSH_HOST }}
+      SSH_PORT: ${{ secrets.FASTRD_SSH_PORT }}
+      SSH_USER: ${{ secrets.FASTRD_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.FASTRD_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.FASTRD_SSH_KNOWN_HOSTS }}
+      runtime-secrets: |
+        {
+          "FASTINSIGHT_FASTCAS_CLIENT_SECRET": ${{ toJSON(secrets.FASTINSIGHT_FASTCAS_CLIENT_SECRET) }},
+          "FEISHU_APP_ID": ${{ toJSON(secrets.FEISHU_APP_ID) }},
+          "FEISHU_APP_SECRET": ${{ toJSON(secrets.FEISHU_APP_SECRET) }},
+          "OPENAI_API_KEY": ${{ toJSON(secrets.OPENAI_API_KEY) }},
+          "SERPAPI_API_KEY": ${{ toJSON(secrets.SERPAPI_API_KEY) }}
+        }
