@@ -116,3 +116,7 @@ fastinsight/pipeline.py
 scripts/               # 从 OpenClaw skill 拷贝的验证 / 路由 / 发布
 assets/colleagues.yaml
 ```
+
+## 可选 FastCAS 服务身份
+
+启用 FastCAS 投递时，在 Python ≥3.10 环境运行 `python -m pip install -r requirements-fastcas.txt`，固定 `fastcas-sdk==0.1.2`。原脚本/飞书路径不依赖此可选安装，服务权限仍按接收端的 scope 与收件人限制校验。
