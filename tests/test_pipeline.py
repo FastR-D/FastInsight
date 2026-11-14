@@ -58,6 +58,21 @@ class ImageContentSearchTests(unittest.TestCase):
         )
         self.assertEqual(query, "FirmAgent firmware fuzzing")
 
+    def test_verification_query_keeps_existing_url(self) -> None:
+        query = _verification_query(
+            {"url": "https://arxiv.org/abs/1706.03762", "title": "A description"},
+            "A description",
+        )
+        self.assertEqual(query, "https://arxiv.org/abs/1706.03762 A description")
+
+    def test_url_only_paper_reaches_verifier(self) -> None:
+        with patch("scripts.auto_pipeline._run_json", return_value=({}, 0)) as run:
+            from scripts.auto_pipeline import enrich_paper
+
+            enrich_paper({"url": "https://example.test/paper"})
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--query") + 1], "https://example.test/paper")
+
 
 if __name__ == "__main__":
     unittest.main()
