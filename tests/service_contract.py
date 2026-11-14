@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='fastinsight-contract-') as directory:
                     'FASTINSIGHT_FASTCAS_CLIENT_SECRET':secret,
                     'FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP':'true','FASTINSIGHT_INGEST_KEY':''}
         def publish(receiver):
-            return subprocess.run([sys.executable,str(publisher),'--paper',str(paper),'--endpoint',origin,'--receiver-ref',receiver],env=client_env,capture_output=True,text=True,timeout=20)
+            return subprocess.run([sys.executable,str(publisher),'--paper',str(paper),'--endpoint',origin,'--receiver-ref',receiver,'--trend-text','Isolated service authorization contract summary'],env=client_env,capture_output=True,text=True,timeout=20)
         result=publish(account_a)
         assert result.returncode==0,(result.stdout,result.stderr)
         with httpx.Client(base_url=origin,follow_redirects=False) as app:

@@ -1,0 +1,26 @@
+name: Roll back FastInsight
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected-release:
+        description: Exact active FastDeploy release ID from the deployment log
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    uses: FastR-D/FastDeploy/.github/workflows/rollback.yml@9a2c51dcd63f47a0e6c8f6bb07bd22ea589abbd2
+    with:
+      app: fastinsight
+      expected-release: ${{ inputs.expected-release }}
+    secrets:
+      SSH_HOST: ${{ secrets.FASTRD_SSH_HOST }}
+      SSH_PORT: ${{ secrets.FASTRD_SSH_PORT }}
+      SSH_USER: ${{ secrets.FASTRD_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.FASTRD_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.FASTRD_SSH_KNOWN_HOSTS }}

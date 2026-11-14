@@ -40,7 +40,7 @@
 ## 运行
 
 ```bash
-cd /home/dev/fastinsight
+cd /path/to/fastinsight
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env   # 填入 FEISHU_APP_ID / FEISHU_APP_SECRET / FastResearch 配置
@@ -116,3 +116,7 @@ fastinsight/pipeline.py
 scripts/               # 从 OpenClaw skill 拷贝的验证 / 路由 / 发布
 assets/colleagues.yaml
 ```
+
+## 可选 FastCAS 服务身份
+
+启用 FastCAS 投递时，在 Python ≥3.10 环境运行 `python -m pip install -r requirements-fastcas.txt`，固定 `fastcas-sdk==0.1.2`。原脚本/飞书路径不依赖此可选安装，服务权限仍按接收端的 scope 与收件人限制校验。

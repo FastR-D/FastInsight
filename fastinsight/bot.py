@@ -18,6 +18,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import lark_oapi as lark
@@ -71,10 +72,10 @@ class FastInsightBot:
         self.feishu = FeishuApp(
             env("FEISHU_APP_ID"),
             env("FEISHU_APP_SECRET"),
-            capture_dir=ROOT / ".captures",
+            capture_dir=Path(env("FASTINSIGHT_STATE_DIR", str(ROOT))) / ".captures",
             bot_open_id=env("FEISHU_BOT_OPEN_ID"),
         )
-        self.capture = CaptureStore(ROOT / ".pending-capture.json")
+        self.capture = CaptureStore(Path(env("FASTINSIGHT_STATE_DIR", str(ROOT))) / ".pending-capture.json")
         self._seen = SeenSet()
         self._batch_stops: Dict[str, tuple] = {}
         self._batch_lock = threading.Lock()
@@ -434,7 +435,7 @@ def check_chat(chat_id: str) -> int:
     app = FeishuApp(
         env("FEISHU_APP_ID"),
         env("FEISHU_APP_SECRET"),
-        capture_dir=ROOT / ".captures",
+        capture_dir=Path(env("FASTINSIGHT_STATE_DIR", str(ROOT))) / ".captures",
         bot_open_id=env("FEISHU_BOT_OPEN_ID"),
     )
     result = {
