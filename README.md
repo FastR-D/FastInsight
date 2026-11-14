@@ -40,7 +40,7 @@
 ## 运行
 
 ```bash
-cd /home/dev/fastinsight
+cd /path/to/fastinsight
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env   # 填入 FEISHU_APP_ID / FEISHU_APP_SECRET / FastResearch 配置
