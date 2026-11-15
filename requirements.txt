@@ -2,5 +2,5 @@ lark-oapi==1.7.5
 requests>=2.34.2
 requests-toolbelt>=1.0.0
 pycryptodome>=4.4.0
-websockets>=11,<16
+websockets>=17.4,<18
 httpx>=0.28.1
