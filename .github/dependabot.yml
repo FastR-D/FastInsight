@@ -2,6 +2,10 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: /
+    # lark-oapi 1.7.5 requires websockets <16.
+    ignore:
+      - dependency-name: websockets
+        versions: [">=16"]
     schedule:
       interval: weekly
     groups:
