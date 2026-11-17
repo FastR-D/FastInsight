@@ -18,6 +18,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -34,6 +35,8 @@ from .parse import (
     parse_feishu_message,
 )
 from .pipeline import (
+    Cancelled,
+    Operation,
     confirmation_text,
     paper_from_ocr,
     paper_from_url,
@@ -47,6 +50,14 @@ POLL_SECONDS = 2.0
 SEEN_LIMIT = 2048
 
 LOGGER = logging.getLogger("fastinsight")
+
+
+@dataclass
+class ImageBatch:
+    id: str
+    operation: Operation = field(default_factory=Operation)
+    # The capture loop owns one job until it closes; each payload owns another.
+    jobs: int = 1
 
 
 class SeenSet:
@@ -77,7 +88,7 @@ class FastInsightBot:
         )
         self.capture = CaptureStore(Path(env("FASTINSIGHT_STATE_DIR", str(ROOT))) / ".pending-capture.json")
         self._seen = SeenSet()
-        self._batch_stops: Dict[str, tuple] = {}
+        self._batches: Dict[str, ImageBatch] = {}
         self._batch_lock = threading.Lock()
 
     def start(self) -> None:
@@ -161,24 +172,34 @@ class FastInsightBot:
         batch_id = hashlib.sha256(
             f"{chat_id}:{parsed.event_id or parsed.message_id}:{command_time}".encode("utf-8")
         ).hexdigest()
-        stop = threading.Event()
+        batch = ImageBatch(batch_id)
         with self._batch_lock:
-            previous = self._batch_stops.get(chat_id)
-            self._batch_stops[chat_id] = (batch_id, stop)
+            previous = self._batches.get(chat_id)
+            if previous:
+                previous.operation.stop.set()
+            self.capture.arm(
+                chat_id,
+                chat_id=chat_id,
+                mode="image_batch",
+                batch_id=batch_id,
+                command_message_id=parsed.message_id,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            self._batches[chat_id] = batch
         if previous:
-            previous_stop = previous[1]
-            previous_stop.set()
-            self.capture.finish_batch(chat_id, batch_id=str(previous[0]), status="cancelled")
+            previous.operation.cancel()
+        try:
+            self._run_image_batch(chat_id, parsed, batch, window_start, window_end)
+        except Cancelled:
+            self._finish_job(chat_id, batch)
+        except Exception:
+            self._cancel_batch(chat_id, batch)
+            self._finish_job(chat_id, batch)
+            raise
 
-        self.capture.arm(
-            chat_id,
-            chat_id=chat_id,
-            mode="image_batch",
-            batch_id=batch_id,
-            command_message_id=parsed.message_id,
-            window_start=window_start,
-            window_end=window_end,
-        )
+    def _run_image_batch(self, chat_id, parsed, batch, window_start, window_end):
+        batch.operation.checkpoint()
         probe = self.feishu.probe_list(chat_id)
         prompt = (
             f"已开启 FastInsight 批量处理：将分发命令前 {CAPTURE_WINDOW_SECONDS // 60} 分钟至 "
@@ -186,11 +207,12 @@ class FastInsightBot:
         )
         if probe.get("list_permission_denied") or probe.get("missing_scopes"):
             prompt += "\n\n" + timeout_hint(list(probe.get("missing_scopes") or []))
-        self.feishu.send_text(chat_id, prompt)
+        with batch.operation.effect():
+            self.feishu.send_text(chat_id, prompt)
 
         self._queue_batch_payloads(
             parsed,
-            batch_id=batch_id,
+            batch_id=batch.id,
             source="command_event",
             include_urls=True,
         )
@@ -198,11 +220,10 @@ class FastInsightBot:
             target=self._image_batch_loop,
             kwargs={
                 "chat_id": chat_id,
-                "batch_id": batch_id,
+                "batch": batch,
                 "command_message_id": parsed.message_id,
                 "window_start": window_start,
                 "window_end": window_end,
-                "stop": stop,
                 "can_list": bool(probe.get("list_ok")),
             },
             daemon=True,
@@ -212,7 +233,7 @@ class FastInsightBot:
                 {
                     "event": "image_batch_armed",
                     "chat_id": chat_id,
-                    "batch_id": batch_id,
+                    "batch_id": batch.id,
                     "window_start": window_start,
                     "window_end": window_end,
                     "missing_scopes": probe.get("missing_scopes") or [],
@@ -223,11 +244,15 @@ class FastInsightBot:
         )
 
     def _active_image_batch(self, chat_id: str) -> str:
-        status = self.capture.status(chat_id)
-        record = status.get("record") if isinstance(status.get("record"), dict) else {}
-        if not status.get("armed") or record.get("mode") != "image_batch":
+        with self._batch_lock:
+            batch = self._batches.get(chat_id)
+            if not batch or batch.operation.stop.is_set():
+                return ""
+            status = self.capture.status(chat_id)
+            record = status.get("record") if isinstance(status.get("record"), dict) else {}
+            if status.get("armed") and record.get("batch_id") == batch.id:
+                return batch.id
             return ""
-        return str(record.get("batch_id") or "")
 
     def _queue_batch_payloads(
         self,
@@ -239,33 +264,53 @@ class FastInsightBot:
     ) -> None:
         message_time = create_time_seconds(parsed.create_time) or time.time()
         for payload in batch_payloads(parsed, include_urls=include_urls):
-            claim = self.capture.claim_payload(
-                parsed.chat_id,
-                batch_id=batch_id,
-                payload_id=str(payload.get("payload_id") or ""),
-                message_id=parsed.message_id,
-                image_key=str(payload.get("image_key") or ""),
-                message_time=message_time,
-            )
-            if not claim.get("claimed"):
-                continue
-            payload["message_id"] = parsed.message_id
-            payload["source"] = source
-            payload["sender_id"] = parsed.sender_id
-            payload["batch_id"] = batch_id
-            self._process_async(parsed.chat_id, payload, batch_id=batch_id)
+            with self._batch_lock:
+                batch = self._batches.get(parsed.chat_id)
+                if not batch or batch.id != batch_id or batch.operation.stop.is_set():
+                    return
+                claim = self.capture.claim_payload(
+                    parsed.chat_id,
+                    batch_id=batch_id,
+                    payload_id=str(payload.get("payload_id") or ""),
+                    message_id=parsed.message_id,
+                    image_key=str(payload.get("image_key") or ""),
+                    message_time=message_time,
+                )
+                if not claim.get("claimed"):
+                    continue
+                payload["message_id"] = parsed.message_id
+                payload["source"] = source
+                payload["sender_id"] = parsed.sender_id
+                payload["batch_id"] = batch_id
+                batch.jobs += 1
+                try:
+                    self._process_async(parsed.chat_id, payload, batch=batch)
+                except Exception:
+                    batch.jobs -= 1
+                    raise
 
     def _image_batch_loop(
         self,
         *,
         chat_id: str,
-        batch_id: str,
+        batch: ImageBatch,
         command_message_id: str,
         window_start: float,
         window_end: float,
-        stop: threading.Event,
         can_list: bool,
     ) -> None:
+        try:
+            self._poll_image_batch(
+                chat_id=chat_id, batch=batch, command_message_id=command_message_id,
+                window_start=window_start, window_end=window_end, can_list=can_list,
+            )
+        except Cancelled:
+            pass
+        finally:
+            self._finish_job(chat_id, batch)
+
+    def _poll_image_batch(self, *, chat_id, batch, command_message_id, window_start, window_end, can_list):
+        stop = batch.operation.stop
         while not stop.is_set() and time.time() <= window_end:
             if can_list:
                 try:
@@ -286,7 +331,7 @@ class FastInsightBot:
                             continue
                         self._queue_batch_payloads(
                             parsed,
-                            batch_id=batch_id,
+                            batch_id=batch.id,
                             source="feishu_list",
                         )
                 except Exception as error:  # noqa: BLE001
@@ -297,57 +342,72 @@ class FastInsightBot:
 
         if stop.is_set():
             return
-        result = self.capture.finish_batch(chat_id, batch_id=batch_id, status="completed")
         with self._batch_lock:
-            current = self._batch_stops.get(chat_id)
-            if current and current[0] == batch_id:
-                self._batch_stops.pop(chat_id, None)
+            if self._batches.get(chat_id) is not batch or stop.is_set():
+                return
+            result = self.capture.finish_batch(chat_id, batch_id=batch.id, status="completed")
         count = int(result.get("processed_count") or 0)
-        self.feishu.send_text(
-            chat_id,
-            f"图片处理时间窗已结束，本批次共登记 {count} 个处理项；时间窗外的新消息不再处理。",
-        )
+        with batch.operation.effect():
+            self.feishu.send_text(
+                chat_id,
+                f"图片处理时间窗已结束，本批次共登记 {count} 个处理项；时间窗外的新消息不再处理。",
+            )
 
     def _cancel_image_batch(self, chat_id: str) -> None:
         with self._batch_lock:
-            current = self._batch_stops.pop(chat_id, None)
-        if not current:
-            return
-        batch_id, stop = current
-        stop.set()
-        self.capture.finish_batch(chat_id, batch_id=str(batch_id), status="cancelled")
+            current = self._batches.get(chat_id)
+        if current:
+            self._cancel_batch(chat_id, current)
+
+    def _cancel_batch(self, chat_id: str, batch: ImageBatch) -> None:
+        with self._batch_lock:
+            batch.operation.stop.set()
+            if self._batches.get(chat_id) is batch:
+                self.capture.finish_batch(chat_id, batch_id=batch.id, status="cancelled")
+                self._batches.pop(chat_id, None)
+        batch.operation.cancel()
+
+    def _finish_job(self, chat_id: str, batch: ImageBatch) -> None:
+        with self._batch_lock:
+            batch.jobs -= 1
+            if batch.jobs == 0 and self._batches.get(chat_id) is batch:
+                self._batches.pop(chat_id, None)
 
     def _process_async(
         self,
         chat_id: str,
         payload: Dict[str, Any],
         *,
-        batch_id: str = "",
+        batch: ImageBatch,
     ) -> None:
         threading.Thread(
             target=self._process,
-            args=(chat_id, payload, batch_id),
+            args=(chat_id, payload, batch),
             daemon=True,
         ).start()
 
-    def _process(self, chat_id: str, payload: Dict[str, Any], batch_id: str = "") -> None:
+    def _process(self, chat_id: str, payload: Dict[str, Any], batch: ImageBatch) -> None:
         print(json.dumps({"event": "captured", "chat_id": chat_id, "payload": _public_payload(payload)}, ensure_ascii=False), flush=True)
         try:
-            self.feishu.send_text(chat_id, WORKING_TEXT)
-        except Exception as error:  # noqa: BLE001
-            LOGGER.warning("working notify failed: %s", error)
-        try:
+            with batch.operation.effect():
+                try:
+                    self.feishu.send_text(chat_id, WORKING_TEXT)
+                except Exception as error:  # noqa: BLE001
+                    LOGGER.warning("working notify failed: %s", error)
+            batch.operation.checkpoint()
             if payload.get("kind") == "image":
                 payload["image_path"] = self.feishu.download_image(
                     str(payload.get("message_id") or ""),
                     str(payload.get("image_key") or ""),
                 )
+            batch.operation.checkpoint()
             paper = self._payload_to_paper(chat_id, payload)
             if paper is None:
                 return
-            result = process_paper(paper)
+            result = process_paper(paper, operation=batch.operation)
             text = confirmation_text(result)
-            self.feishu.send_text(chat_id, text)
+            with batch.operation.effect():
+                self.feishu.send_text(chat_id, text)
             print(
                 json.dumps(
                     {
@@ -360,13 +420,18 @@ class FastInsightBot:
                 ),
                 flush=True,
             )
+        except Cancelled:
+            LOGGER.info("batch payload cancelled: %s", batch.id)
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("pipeline failed: %s", error)
             try:
-                self.feishu.send_text(chat_id, f"FastInsight 处理失败：{error}")
+                with batch.operation.effect():
+                    self.feishu.send_text(chat_id, f"FastInsight 处理失败：{error}")
             except Exception:
                 pass
             print(json.dumps({"event": "failed", "chat_id": chat_id, "error": str(error)}, ensure_ascii=False), flush=True)
+        finally:
+            self._finish_job(chat_id, batch)
 
     def _payload_to_paper(
         self,

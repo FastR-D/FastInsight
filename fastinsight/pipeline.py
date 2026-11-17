@@ -26,6 +26,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from auto_pipeline import enrich_paper, process as run_auto_pipeline  # noqa: E402
+from operation import Operation, Cancelled  # noqa: E402
 
 
 def _looks_like_user_title(text: str) -> bool:
@@ -285,14 +286,18 @@ def generate_trend(paper: Dict[str, Any]) -> str:
     )
 
 
-def process_paper(paper: Dict[str, Any]) -> Dict[str, Any]:
+def process_paper(paper: Dict[str, Any], *, operation: Optional[Operation] = None) -> Dict[str, Any]:
+    operation = operation or Operation()
+    operation.checkpoint()
     paper = dict(paper)
     if not str(paper.get("title") or "").strip() and str(paper.get("url") or "").strip():
         paper["title"] = paper["url"]
     # Skill order: identify → verify/enrich → LLM trend → classify → FastResearch.
     paper = enrich_paper(paper)
+    operation.checkpoint()
     trend = generate_trend(paper)
-    result = run_auto_pipeline(paper, trend_text=trend, skip_verify=True)
+    operation.checkpoint()
+    result = run_auto_pipeline(paper, trend_text=trend, skip_verify=True, operation=operation)
     result["trend_text"] = trend
     return result
 
