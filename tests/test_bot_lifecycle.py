@@ -101,7 +101,8 @@ class BotLifecycleScenarios(unittest.TestCase):
                     bot.handle_event(event("payload", "https://doi.org/10.1000/known firmware"))
                     self.assertTrue(world.model_entered.wait(5))
                     offset[0] = 61
-                    wait_until(lambda: not bot.capture.status("oc_fixture")["armed"])
+                    wait_until(lambda: bot.capture.status("oc_fixture")["record"].get("status") == "completed"
+                        and len(world.notifications) >= 3)
                     if cancel_after_window:
                         bot.handle_event(event("cancel", "@fastinsight cancel"))
                     world.model_release.set()
