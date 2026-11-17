@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from text_clip import compose_research_summary, prefer_abstract
 from service_auth import service_configuration, service_token
+from publish_receipt import validate_publish_receipt
 
 ROSTER_DEFAULT = ROOT.parent / "assets" / "colleagues.yaml"
 
@@ -54,30 +55,28 @@ def _verification_query(paper, title):
     return " ".join(piece for piece in pieces if piece)
 
 
-def _merge_web_fallback(existing, fallback):
-    """Keep screenshot/link metadata and enrich gaps from a web-search hit."""
-    merged = dict(existing)
-    existing_url = _text(merged.get("url"))
-    score = fallback.get("match_score")
+def _accepted_candidate(candidate):
+    if candidate.get("exact"):
+        return True
     try:
-        strong_match = float(score or 0) >= 0.6
+        return 0.6 <= float(candidate.get("match_score") or 0) <= 1.0
     except (TypeError, ValueError):
-        strong_match = False
+        return False
+
+
+def _merge_web_fallback(existing, fallback):
+    """Fetching a candidate does not grant it authority over the supplied paper."""
+    merged = dict(existing)
+    if not _accepted_candidate(fallback):
+        merged["verification_note"] = "unconfirmed search candidate; supplied paper metadata retained"
+        return merged
     page_fetched = bool(fallback.get("page_fetched"))
-    for key in ("url", "url_kind"):
-        value = fallback.get(key)
-        if value is None or value == "":
-            continue
-        if not existing_url or strong_match or page_fetched:
-            merged[key] = value
-    for key in ("provider", "match_score", "web_search_result"):
+    for key in ("url", "url_kind", "provider", "match_score", "web_search_result"):
         value = fallback.get(key)
         if value is not None and value != "":
             merged[key] = value
     if page_fetched:
-        # A successfully fetched page is the source of truth for metadata:
-        # use the title/authors/venue/year found on the page. Abstracts still
-        # prefer an official paper abstract over a search snippet.
+        # Only an accepted candidate may replace supplied metadata.
         for key in ("title", "authors", "year", "venue", "doi", "arxiv_id"):
             if _text(fallback.get(key)):
                 merged[key] = fallback[key]
@@ -144,7 +143,7 @@ def _publish(endpoint, ingest_key, person, paper, trends, direction, *, cas_conf
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return validate_publish_receipt(json.loads(response.read().decode("utf-8")))
 
 
 def _normalize_paper(paper):
@@ -163,13 +162,9 @@ def _apply_verification(paper, verified):
     if not isinstance(verified, dict) or not isinstance(verified.get("best"), dict):
         return paper
     best = verified["best"]
-    try:
-        score = float(best.get("match_score") or 0)
-    except (TypeError, ValueError):
-        score = 0.0
     academic_confirmed = bool(
         verified.get("verified_by_academic_sources")
-        and (best.get("exact") or score >= 0.6)
+        and _accepted_candidate(best)
     )
     if academic_confirmed:
         return best
