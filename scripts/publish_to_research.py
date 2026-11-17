@@ -11,6 +11,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from text_clip import compose_research_summary, normalize_ws
 from service_auth import service_configuration, service_token
+from publish_receipt import validate_publish_receipt
 
 
 def normalize(value):
@@ -106,11 +107,14 @@ def main():
     )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            print(response.read().decode("utf-8", "replace"))
+            receipt = validate_publish_receipt(json.loads(response.read().decode("utf-8")))
+            print(json.dumps(receipt, ensure_ascii=False))
     except urllib.error.HTTPError as error:
         raise SystemExit(
             f"FastResearch 发布失败 ({error.code}): {error.read().decode('utf-8', 'replace')}"
         )
+    except ValueError as error:
+        raise SystemExit(f"FastResearch 发布失败：{error}")
 
 
 if __name__ == "__main__":

@@ -309,11 +309,6 @@ def confirmation_text(result: Dict[str, Any]) -> str:
     direction = " / ".join(direction_names) or str(route.get("matched_direction") or "").strip() or "未分类"
     delivered = result.get("delivered") or []
     names: List[str] = []
-    for owner in route.get("owners") or []:
-        if isinstance(owner, dict) and owner.get("name"):
-            name = str(owner["name"]).strip()
-            if name and name not in names:
-                names.append(name)
     for item in delivered:
         if not isinstance(item, dict):
             continue
