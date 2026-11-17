@@ -56,18 +56,19 @@ def wait_until(predicate):
 class BotLifecycleScenarios(unittest.TestCase):
     def test_cancel_during_identification_verification_or_trend_prevents_publication(self):
         for stage in ("image", "verification", "model"):
-            with self.subTest(stage=stage), bot_world() as (bot, world):
-                getattr(world, stage + "_release").clear()
-                bot.handle_event(event("start", "@fastinsight"))
-                if stage == "image":
-                    bot.handle_event(event("payload", image=True))
-                else:
-                    bot.handle_event(event("payload", "https://doi.org/10.1000/known firmware"))
-                self.assertTrue(getattr(world, stage + "_entered").wait(5))
-                bot.handle_event(event("cancel", "@fastinsight cancel"))
-                self.assertFalse(bot.capture.status("oc_fixture")["armed"])
-                getattr(world, stage + "_release").set()
-            self.assertEqual(world.published, [])
+            with self.subTest(stage=stage):
+                with bot_world() as (bot, world):
+                    getattr(world, stage + "_release").clear()
+                    bot.handle_event(event("start", "@fastinsight"))
+                    if stage == "image":
+                        bot.handle_event(event("payload", image=True))
+                    else:
+                        bot.handle_event(event("payload", "https://doi.org/10.1000/known firmware"))
+                    self.assertTrue(getattr(world, stage + "_entered").wait(5))
+                    bot.handle_event(event("cancel", "@fastinsight cancel"))
+                    self.assertFalse(bot.capture.status("oc_fixture")["armed"])
+                    getattr(world, stage + "_release").set()
+                self.assertEqual(world.published, [])
 
     def test_cancel_drains_admitted_publish_and_prevents_the_next_recipient(self):
         with bot_world() as (bot, world):
@@ -158,3 +159,4 @@ class BotLifecycleScenarios(unittest.TestCase):
             state = bot.capture.status("oc_fixture")
             self.assertTrue(state["armed"])
             self.assertEqual(state["record"]["batch_id"], replacement)
+        self.assertEqual(len(world.published), 2)
