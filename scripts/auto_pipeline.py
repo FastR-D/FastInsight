@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from text_clip import compose_research_summary, prefer_abstract
 from service_auth import service_configuration, service_token
 from publish_receipt import validate_publish_receipt
+from operation import Operation
 
 ROSTER_DEFAULT = ROOT.parent / "assets" / "colleagues.yaml"
 
@@ -197,8 +198,10 @@ def enrich_paper(paper):
         return _apply_verification(paper, verified)
 
 
-def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_text=None, skip_verify=False):
+def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_text=None, skip_verify=False, operation=None):
     """Verify, enrich, route, and publish one paper. Returns an audit object."""
+    operation = operation or Operation()
+    operation.checkpoint()
     paper = _normalize_paper(paper)
     endpoint = endpoint or os.environ.get("FASTRESEARCH_URL", "http://127.0.0.1:8787")
     ingest_key = ingest_key if ingest_key is not None else os.environ.get("FASTINSIGHT_INGEST_KEY", "")
@@ -206,6 +209,7 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
     roster_path = str(roster_path or os.environ.get("FASTINSIGHT_ROSTER", ROSTER_DEFAULT))
     if not skip_verify:
         paper = enrich_paper(paper)
+    operation.checkpoint()
     with tempfile.TemporaryDirectory(prefix="fastinsight-") as temp_dir:
         temp = Path(temp_dir)
         paper_path = temp / "paper.json"
@@ -235,6 +239,7 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
             if not trends and trends_path.exists():
                 trends = json.loads(trends_path.read_text(encoding="utf-8"))
         route, route_code = _run_json([sys.executable, str(ROOT / "route_paper.py"), "--paper", str(paper_path), "--roster", roster_path, "--trends", str(trends_path), "--dry-run"])
+    operation.checkpoint()
     if route_code != 0 or not isinstance(route, dict):
         raise RuntimeError(
             "route_paper refused to render an incomplete card: "
@@ -257,18 +262,19 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
             errors.append(f"{person}: FastCAS 服务投递需要名册中的 receiver_ref")
             continue
         try:
-            delivered.append(
-                _publish(
-                    endpoint,
-                    ingest_key,
-                    person,
-                    paper,
-                    trends,
-                    direction,
-                    cas_config=cas_config,
-                    receiver_ref=receiver_ref,
+            with operation.effect():
+                delivered.append(
+                    _publish(
+                        endpoint,
+                        ingest_key,
+                        person,
+                        paper,
+                        trends,
+                        direction,
+                        cas_config=cas_config,
+                        receiver_ref=receiver_ref,
+                    )
                 )
-            )
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
             errors.append(f"{person}: {exc}")
     return {"paper": paper, "route": route, "route_code": route_code, "delivered": delivered, "errors": errors}
