@@ -1,6 +1,6 @@
-lark-oapi==1.7.5
+lark-oapi==1.8.0
 requests>=2.34.2
 requests-toolbelt>=1.0.0
-pycryptodome>=4.4.0
+pycryptodome>=4.5.0
 websockets>=15.0.1,<16
 httpx>=0.28.1
