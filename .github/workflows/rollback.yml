@@ -14,7 +14,7 @@ permissions:
 jobs:
   rollback:
     if: github.ref == 'refs/heads/main'
-    uses: FastR-D/FastDeploy/.github/workflows/rollback.yml@9a2c51dcd63f47a0e6c8f6bb07bd22ea589abbd2
+    uses: FastR-D/FastDeploy/.github/workflows/rollback.yml@ae970f2251f237eb961889b29b1bb1af68b12708
     with:
       app: fastinsight
       expected-release: ${{ inputs.expected-release }}
