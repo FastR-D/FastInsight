@@ -22,8 +22,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - run: python -m pip install --target vendor -r requirements.txt -r requirements-fastcas.txt
+          python-version-file: .python-version
+      - name: Install pinned uv
+        run: python -m pip install uv==0.11.19
+      - name: Export and install the locked runtime
+        run: |
+          uv export --locked --no-dev --no-emit-project --output-file requirements.txt
+          git diff --exit-code -- requirements.txt
+          uv pip sync --python python --target vendor --require-hashes requirements.txt
       - run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: vendor
@@ -60,7 +66,6 @@ jobs:
         FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP=false
         FASTINSIGHT_FASTCAS_CLIENT_ID=fastinsight
         FASTINSIGHT_FASTCAS_ISSUER=https://cas.fastrd.io
-        FASTINSIGHT_ROSTER=/home/dev/fastinsight/assets/colleagues.yaml
         FASTINSIGHT_STATE_DIR=/home/dev/fastinsight
         FASTRESEARCH_URL=http://127.0.0.1:8787
         OPENAI_BASE_URL=https://api.deepseek.com

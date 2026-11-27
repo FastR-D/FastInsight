@@ -6,7 +6,8 @@ delivery path. Owners are valid by ``name`` even without a Feishu open_id.
 
 Inputs:
   --paper   flat paper JSON or verify_paper.py output containing ``best``
-  --roster  colleagues.yaml (or JSON) with directions and optional default_owner
+  --endpoint  FastResearch URL (defaults to FASTRESEARCH_URL)
+  --roster-json  optional immutable JSON snapshot for an offline preview
   --trends  optional analyze_trends.py output
 
 Matching is case-insensitive. ASCII keywords use token boundaries so short
@@ -14,16 +15,14 @@ terms such as ``RL`` do not match inside ``URL``; Chinese and mixed-language
 keywords use phrase matching. Every direction with at least one matching
 keyword is selected, and its owners are deduplicated across directions. The
 highest-scoring direction remains the primary classification for compatibility.
-When no keyword matches, an LLM performs conservative semantic routing from
-the roster's research directions; low-confidence decisions use default_owner.
+When no keyword matches, default_owner is used directly. A matched direction
+without owners remains unroutable rather than adding an invisible default edge.
 """
 import argparse
 import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,9 +31,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from text_clip import ABSTRACT_STORE_LIMIT, clip_at_sentence
 from fastinsight.config import load_env
+from roster_client import fetch_roster, validate_roster
 
 _ASCII_KEYWORD = re.compile(r"^[a-z0-9_]+(?:[ \t]+[a-z0-9_]+)*$")
-DEFAULT_SEMANTIC_THRESHOLD = 0.75
 
 
 def _as_text(value):
@@ -58,17 +57,9 @@ def _is_placeholder(value):
     )
 
 
-def load_roster(path):
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-    try:
-        import yaml
-
-        return yaml.safe_load(text)
-    except ImportError:
-        from mini_yaml import load
-
-        return load(text)
+def load_roster_json(path):
+    with open(path, "r", encoding="utf-8") as source:
+        return validate_roster(json.load(source))
 
 
 def normalize_paper(paper):
@@ -134,11 +125,18 @@ def _collect_valid_owners(value):
             invalid.append(open_id or "(unnamed owner)")
             continue
         has_open_id = bool(open_id and not _is_placeholder(open_id))
-        owner_key = ("open_id", open_id) if has_open_id else ("name", name.casefold())
+        receiver_ref = _as_text(owner.get("receiver_ref")).strip()
+        member_id = _as_text(owner.get("id")).strip()
+        has_receiver = bool(receiver_ref and not _is_placeholder(receiver_ref))
+        owner_key = (("receiver_ref", receiver_ref) if has_receiver else
+                     ("id", member_id) if member_id else
+                     ("open_id", open_id) if has_open_id else ("name", name.casefold()))
         if owner_key in seen_owner_keys:
             continue
         seen_owner_keys.add(owner_key)
         owner_out = {"name": name}
+        if member_id:
+            owner_out["id"] = member_id
         if has_open_id:
             owner_out["feishu_open_id"] = open_id
         receiver_ref = _as_text(owner.get("receiver_ref")).strip()
@@ -168,182 +166,7 @@ def _clip_abstract(value):
     return text or "暂无摘要"
 
 
-def _semantic_threshold():
-    raw = os.environ.get("FASTINSIGHT_SEMANTIC_ROUTING_THRESHOLD", "").strip()
-    try:
-        return min(1.0, max(0.0, float(raw))) if raw else DEFAULT_SEMANTIC_THRESHOLD
-    except ValueError:
-        return DEFAULT_SEMANTIC_THRESHOLD
-
-
-def _semantic_profiles(roster):
-    profiles = {}
-    for direction in roster.get("directions", []) or []:
-        if not isinstance(direction, dict):
-            continue
-        direction_name = _as_text(direction.get("name")).strip()
-        keywords = [
-            _as_text(keyword).strip()
-            for keyword in direction.get("keywords", []) or []
-            if _as_text(keyword).strip()
-        ]
-        for owner in _owner_list(direction.get("owners")):
-            if not isinstance(owner, dict):
-                continue
-            name = _as_text(owner.get("name")).strip()
-            if not name:
-                continue
-            key = name.casefold()
-            profile = profiles.setdefault(
-                key,
-                {"name": name, "directions": [], "keywords": [], "owner": owner},
-            )
-            if direction_name and direction_name not in profile["directions"]:
-                profile["directions"].append(direction_name)
-            for keyword in keywords:
-                if keyword not in profile["keywords"]:
-                    profile["keywords"].append(keyword)
-    return list(profiles.values())
-
-
-def _parse_json_object(content):
-    match = re.search(r"\{[\s\S]*\}", _as_text(content))
-    if not match:
-        raise RuntimeError("LLM did not return a JSON object")
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError as error:
-        raise RuntimeError("LLM returned invalid JSON") from error
-    if not isinstance(data, dict):
-        raise RuntimeError("LLM JSON must be an object")
-    return data
-
-
-def _semantic_route_paper(roster, paper):
-    load_env()
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    profiles = _semantic_profiles(roster)
-    if not profiles:
-        raise RuntimeError("roster has no semantic owner profiles")
-    model = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-4o-mini"
-    base = os.environ.get("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
-    prompt_profiles = [
-        {
-            "name": profile["name"],
-            "directions": profile["directions"],
-            "keywords": profile["keywords"],
-        }
-        for profile in profiles
-    ]
-    paper_context = {
-        "title": _as_text(paper.get("title")),
-        "abstract": _as_text(paper.get("abstract") or paper.get("summary"))[:6000],
-        "venue": _as_text(paper.get("venue")),
-        "year": _as_text(paper.get("year")),
-    }
-    prompt = (
-        "你是论文分发助手。关键词匹配未命中，请仅根据候选人的研究方向判断论文应分发给谁。"
-        "可以选择一人或多人；只有在论文与研究方向明确相关时才选择。"
-        "如果方向宽泛、证据不足、论文跨领域难以判断，selected 必须为空。"
-        "confidence 是整次判断的置信度，范围 0 到 1；宁可保守，也不要为了分发而强行匹配。"
-        "只返回 JSON：{\"selected\":[{\"name\":\"负责人姓名\",\"directions\":[\"命中的研究方向\"],"
-        "\"reason\":\"简短理由\"}],\"confidence\":0.0,\"reason\":\"整体判断\"}。"
-        f"\n候选人研究方向：{json.dumps(prompt_profiles, ensure_ascii=False)}"
-        f"\n论文信息：{json.dumps(paper_context, ensure_ascii=False)}"
-    )
-    request = urllib.request.Request(
-        base.rstrip("/") + "/chat/completions",
-        data=json.dumps(
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-            },
-            ensure_ascii=False,
-        ).encode("utf-8"),
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            body = json.loads(response.read().decode("utf-8", "replace"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")[:400]
-        raise RuntimeError(f"semantic routing LLM HTTP {error.code}: {detail}") from error
-    choices = body.get("choices") or []
-    content = ((choices[0] or {}).get("message") or {}).get("content") if choices else ""
-    return _parse_json_object(content)
-
-
-def _normalize_semantic_result(result, roster, threshold):
-    normalized = {
-        "attempted": True,
-        "confidence": 0.0,
-        "threshold": threshold,
-        "selected": [],
-        "reason": "",
-        "error": "",
-    }
-    if not isinstance(result, dict):
-        normalized["error"] = "semantic routing returned no object"
-        return normalized
-    try:
-        confidence = float(result.get("confidence") or 0.0)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    confidence = min(1.0, max(0.0, confidence))
-    normalized["confidence"] = confidence
-    normalized["reason"] = _as_text(result.get("reason")).strip()
-    normalized["error"] = _as_text(result.get("error")).strip()
-    profiles = {
-        profile["name"].casefold(): profile for profile in _semantic_profiles(roster)
-    }
-    raw_selected = result.get("selected") or result.get("owners") or []
-    if isinstance(raw_selected, dict):
-        raw_selected = [raw_selected]
-    if not isinstance(raw_selected, list):
-        normalized["error"] = "semantic routing selected must be a list"
-        return normalized
-    seen = set()
-    for item in raw_selected:
-        if isinstance(item, str):
-            item = {"name": item}
-        if not isinstance(item, dict):
-            continue
-        name = _as_text(item.get("name")).strip()
-        profile = profiles.get(name.casefold())
-        if not name or not profile or name.casefold() in seen:
-            continue
-        seen.add(name.casefold())
-        requested = item.get("directions", item.get("direction", []))
-        if isinstance(requested, str):
-            requested = [requested]
-        requested = [
-            _as_text(direction).strip()
-            for direction in requested or []
-            if _as_text(direction).strip()
-        ] if isinstance(requested, list) else []
-        directions = [
-            direction
-            for direction in requested
-            if direction in profile["directions"]
-        ] or list(profile["directions"])
-        normalized["selected"].append(
-            {
-                "name": profile["name"],
-                "directions": directions,
-                "reason": _as_text(item.get("reason")).strip(),
-            }
-        )
-    return normalized
-
-
-def build_route_decision(roster, text, paper, semantic_result=None):
+def build_route_decision(roster, text, paper=None):
     matched_directions = []
     for index, direction in enumerate(roster.get("directions", []) or []):
         if not isinstance(direction, dict):
@@ -363,96 +186,18 @@ def build_route_decision(roster, text, paper, semantic_result=None):
             }
         )
 
-    selected_owners = []
-    invalid_owners = []
-    fallback = False
-    fallback_reason = ""
-    routing_mode = "keyword"
-    semantic = {
-        "attempted": False,
-        "confidence": 0.0,
-        "threshold": _semantic_threshold(),
-        "selected": [],
-        "reason": "",
-        "error": "",
-    }
-
+    fallback = not matched_directions
+    fallback_reason = "no_keyword_match" if fallback else ""
+    routing_mode = "default" if fallback else "keyword"
     if matched_directions:
         matched_owners = []
         for matched in matched_directions:
             matched_owners.extend(_owner_list(matched.get("owners")))
         selected_owners, invalid_owners = _collect_valid_owners(matched_owners)
         if not selected_owners:
-            fallback = True
             fallback_reason = "matched_direction_has_no_valid_owner"
     else:
-        threshold = _semantic_threshold()
-        routing_mode = "semantic"
-        fallback = True
-        fallback_reason = "no_keyword_match"
-        if semantic_result is None:
-            try:
-                semantic_result = _semantic_route_paper(roster, paper)
-            except Exception as error:  # noqa: BLE001 - default safely without LLM
-                semantic_result = {"error": str(error)}
-        semantic = _normalize_semantic_result(semantic_result, roster, threshold)
-        if semantic["selected"] and semantic["confidence"] >= threshold:
-            direction_lookup = {
-                _as_text(direction.get("name")).strip(): direction
-                for direction in roster.get("directions", []) or []
-                if isinstance(direction, dict)
-            }
-            semantic_directions = []
-            owner_values = []
-            for selected in semantic["selected"]:
-                for direction_name in selected["directions"]:
-                    if direction_name not in semantic_directions:
-                        semantic_directions.append(direction_name)
-                profile = next(
-                    (
-                        profile
-                        for profile in _semantic_profiles(roster)
-                        if profile["name"] == selected["name"]
-                    ),
-                    None,
-                )
-                if profile:
-                    owner_values.append(profile["owner"])
-            matched_directions = [
-                {
-                    "name": direction_name,
-                    "score": 0,
-                    "hits": [],
-                    "priority": _priority(direction_lookup.get(direction_name, {})),
-                    "index": index,
-                    "owners": (direction_lookup.get(direction_name) or {}).get("owners"),
-                    "source": "semantic",
-                }
-                for index, direction_name in enumerate(semantic_directions)
-            ]
-            selected_owners, semantic_invalid = _collect_valid_owners(owner_values)
-            invalid_owners.extend(semantic_invalid)
-            fallback_reason = "no_keyword_match_semantic_route"
-        else:
-            if not semantic["selected"]:
-                fallback_reason = (
-                    "semantic_route_unavailable"
-                    if semantic.get("error")
-                    else "semantic_route_no_confident_owner"
-                )
-            else:
-                fallback_reason = "semantic_confidence_below_threshold"
-
-    if not selected_owners:
-        routing_mode = "default"
-        default_owners, invalid_default = _collect_valid_owners(
-            roster.get("default_owner")
-        )
-        selected_owners = default_owners
-        invalid_owners.extend(invalid_default)
-        if not fallback_reason:
-            fallback_reason = "no_direction_match"
-        fallback = True
+        selected_owners, invalid_owners = _collect_valid_owners(roster.get("default_owner"))
 
     primary_direction = max(
         matched_directions,
@@ -476,7 +221,6 @@ def build_route_decision(roster, text, paper, semantic_result=None):
         "fallback": fallback,
         "fallback_reason": fallback_reason,
         "routing_mode": routing_mode,
-        "semantic_route": semantic,
         "invalid_owners": invalid_owners,
         "owners": selected_owners,
         "routable": bool(selected_owners),
@@ -552,7 +296,8 @@ def main():
         description="Classify a paper and select FastResearch owners."
     )
     ap.add_argument("--paper", required=True)
-    ap.add_argument("--roster", required=True)
+    ap.add_argument("--roster-json", help="Offline JSON snapshot; normal runs read the Research database")
+    ap.add_argument("--endpoint", default=None)
     ap.add_argument("--template", default=None)
     ap.add_argument(
         "--trends",
@@ -587,9 +332,13 @@ def main():
     if not isinstance(paper, dict):
         ap.error("--paper must contain a JSON object or a `best` object")
 
-    roster = load_roster(args.roster)
-    if not isinstance(roster, dict):
-        ap.error("--roster must contain a mapping")
+    try:
+        if not args.roster_json:
+            load_env()
+        snapshot = None if args.roster_json else fetch_roster(args.endpoint)
+        roster = load_roster_json(args.roster_json) if args.roster_json else snapshot["roster"]
+    except (OSError, ValueError, RuntimeError) as error:
+        ap.error(str(error))
 
     text = _normalize_text(
         " ".join(
@@ -675,7 +424,7 @@ def main():
         "fallback": fallback,
         "fallback_reason": fallback_reason,
         "routing_mode": decision["routing_mode"],
-        "semantic_route": decision["semantic_route"],
+        "roster_revision": snapshot["revision"] if snapshot else None,
         "invalid_owners": invalid_owners,
         "owners": selected_owners,
         "routable": routable,

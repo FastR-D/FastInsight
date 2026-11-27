@@ -26,3 +26,7 @@ work_paper.json
 verify_out.json
 trends.json
 feishu_card_payload.json
+
+# uv / deployment build outputs
+vendor/
+.fastdeploy-tools/

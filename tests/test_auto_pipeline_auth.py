@@ -25,7 +25,7 @@ class AutomaticPublishingAuthTests(unittest.TestCase):
             "FASTINSIGHT_FASTCAS_CLIENT_ID": "insight-service",
             "FASTINSIGHT_FASTCAS_CLIENT_SECRET": "secret",
             "FASTINSIGHT_INGEST_KEY": "",
-        }), patch.object(auto_pipeline, "_run_json", side_effect=[
+        }), patch.object(auto_pipeline, "fetch_roster", return_value={"roster": {"directions": []}, "revision": "v1"}), patch.object(auto_pipeline, "_run_json", side_effect=[
             ({}, 0), ({}, 0), ({"owners": [
                 {"name": "Shared", "feishu_open_id": "ou_one", "receiver_ref": "acct-one"},
                 {"name": "Shared", "feishu_open_id": "ou_two"},

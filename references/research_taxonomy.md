@@ -1,7 +1,7 @@
 # Research Direction Taxonomy (starter)
 
 A starting set of research directions with keyword hints. Copy the ones relevant
-to your team into `colleagues.yaml` and adjust keywords to match how papers in
+to your team into the FastResearch routing settings page and adjust keywords to match how papers in
 your field are actually titled. Matching is case-insensitive over
 `title + abstract + venue`: ASCII keywords use token boundaries, while Chinese
 and mixed-language keywords use phrase matching.
@@ -10,7 +10,7 @@ and mixed-language keywords use phrase matching.
 > "URL", but short acronyms can still be ambiguous in abstracts.
 
 Every direction with at least one matching keyword is routed. Owners from all
-matching directions are merged and deduplicated by name, so one paper can be
+matching directions are merged and deduplicated by recipient account ID (`receiver_ref`), so one paper can be
 published to several colleagues while the same colleague receives it only once.
 
 ## Natural Language Processing / LLM

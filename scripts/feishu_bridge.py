@@ -14,7 +14,7 @@ from auto_pipeline import process
 try:
     import lark_oapi as lark
 except ImportError as error:  # pragma: no cover - environment dependent
-    raise SystemExit("缺少 lark-oapi，请先执行: pip install -r requirements.txt") from error
+    raise SystemExit("缺少 lark-oapi，请先执行: uv sync --locked") from error
 
 
 _SEEN_EVENTS: Set[str] = set()

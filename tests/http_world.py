@@ -17,6 +17,10 @@ class HTTPWorld:
     def __init__(self):
         self.title = "Unrelated astronomy observations"
         self.receipts = {}
+        self.roster = {"directions": [{"name": "Firmware", "keywords": ["firmware"], "owners": [{"id": "a", "name": "A", "receiver_ref": "account-a"}, {"id": "b", "name": "B", "receiver_ref": "account-b"}]}], "default_owner": {"id": "a", "name": "A", "receiver_ref": "account-a"}}
+        self.roster_revision = "revision-1"
+        self.roster_status = 200
+        self.roster_reads = 0
         self.published = []
         self.requests = []
         self.notifications = []
@@ -77,6 +81,13 @@ class HTTPWorld:
                         vision = any(isinstance(item.get("content"), list) for item in messages)
                         content = json.dumps({"title": "Known firmware paper", "url": "https://doi.org/10.1000/known"}) if vision else "A fixture trend summary."
                         value = {"choices": [{"message": {"content": content}}]}
+                elif path == "/api/fastinsight/roster":
+                    world.roster_reads += 1
+                    if self.headers.get("X-FastInsight-Key") != "fixture-key":
+                        status, value = 401, {"error": "missing fixture service identity"}
+                    else:
+                        status = world.roster_status
+                        value = {"roster": world.roster, "revision": world.roster_revision, "storage": "database"}
                 elif path == "/api/insight/publish":
                     payload = json.loads(body)
                     world.published.append(payload)
@@ -124,15 +135,11 @@ class HTTPWorld:
         self.stack = ExitStack()
         directory = self.stack.enter_context(tempfile.TemporaryDirectory(prefix="insight-http-"))
         self.root = Path(directory)
-        self.roster = self.root / "roster.yaml"
-        self.roster.write_text('directions:\n  - name: "Firmware"\n    keywords: ["firmware"]\n'
-            '    owners:\n      - name: "A"\n      - name: "B"\n'
-            'default_owner:\n  name: "A"\n', encoding="utf-8")
         transport = str(Path(__file__).parent / "transport")
         self.stack.enter_context(patch.dict(os.environ, {
             "FASTINSIGHT_FIXTURE_ORIGIN": self.origin,
             "PYTHONPATH": transport + os.pathsep + os.environ.get("PYTHONPATH", ""),
-            "FASTINSIGHT_ROSTER": str(self.roster), "FASTRESEARCH_URL": self.origin,
+            "FASTINSIGHT_ROSTER": "/does/not/exist/obsolete.yaml", "FASTRESEARCH_URL": self.origin,
             "FASTINSIGHT_INGEST_KEY": "fixture-key", "FASTINSIGHT_ALLOW_LEGACY_INGEST_KEY": "true",
             "FASTINSIGHT_FASTCAS_ISSUER": "", "FASTINSIGHT_FASTCAS_CLIENT_ID": "",
             "FASTINSIGHT_FASTCAS_CLIENT_SECRET": "", "OPENAI_API_KEY": "fixture-key",

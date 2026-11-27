@@ -24,8 +24,7 @@ from text_clip import compose_research_summary, prefer_abstract
 from service_auth import service_configuration, service_token
 from publish_receipt import validate_publish_receipt
 from operation import Operation
-
-ROSTER_DEFAULT = ROOT.parent / "assets" / "colleagues.yaml"
+from roster_client import fetch_roster, research_endpoint
 
 
 def _text(value):
@@ -126,9 +125,9 @@ def _publish(endpoint, ingest_key, person, paper, trends, direction, *, cas_conf
         "direction": direction,
         "source": "FastInsight",
     }
+    if not receiver_ref:
+        raise ValueError("服务投递需要分发配置中的 receiver_ref")
     if cas_config:
-        if not receiver_ref:
-            raise ValueError("FastCAS 服务投递需要名册中的 receiver_ref")
         headers = {
             "Content-Type": "application/json",
             "Authorization": "Bearer " + service_token(cas_config, endpoint),
@@ -136,7 +135,7 @@ def _publish(endpoint, ingest_key, person, paper, trends, direction, *, cas_conf
         payload = {"receiver_ref": receiver_ref, "item": item}
     else:
         headers = {"Content-Type": "application/json", "X-FastInsight-Key": ingest_key}
-        payload = {"person": person, "item": item}
+        payload = {"receiver_ref": receiver_ref, "person": person, "item": item}
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/api/insight/publish",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -198,20 +197,23 @@ def enrich_paper(paper):
         return _apply_verification(paper, verified)
 
 
-def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_text=None, skip_verify=False, operation=None):
+def process(paper, *, endpoint=None, ingest_key=None, trend_text=None, skip_verify=False, operation=None):
     """Verify, enrich, route, and publish one paper. Returns an audit object."""
     operation = operation or Operation()
     operation.checkpoint()
     paper = _normalize_paper(paper)
-    endpoint = endpoint or os.environ.get("FASTRESEARCH_URL", "http://127.0.0.1:8787")
+    endpoint = research_endpoint(endpoint)
     ingest_key = ingest_key if ingest_key is not None else os.environ.get("FASTINSIGHT_INGEST_KEY", "")
     cas_config = service_configuration(ingest_key=ingest_key)
-    roster_path = str(roster_path or os.environ.get("FASTINSIGHT_ROSTER", ROSTER_DEFAULT))
+    snapshot = fetch_roster(endpoint, ingest_key=ingest_key)
+    operation.checkpoint()
     if not skip_verify:
         paper = enrich_paper(paper)
     operation.checkpoint()
     with tempfile.TemporaryDirectory(prefix="fastinsight-") as temp_dir:
         temp = Path(temp_dir)
+        roster_path = temp / "roster.json"
+        roster_path.write_text(json.dumps(snapshot["roster"], ensure_ascii=False), encoding="utf-8")
         paper_path = temp / "paper.json"
         paper_path.write_text(json.dumps(paper, ensure_ascii=False), encoding="utf-8")
         trends_path = temp / "trends.json"
@@ -238,7 +240,7 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
             )
             if not trends and trends_path.exists():
                 trends = json.loads(trends_path.read_text(encoding="utf-8"))
-        route, route_code = _run_json([sys.executable, str(ROOT / "route_paper.py"), "--paper", str(paper_path), "--roster", roster_path, "--trends", str(trends_path), "--dry-run"])
+        route, route_code = _run_json([sys.executable, str(ROOT / "route_paper.py"), "--paper", str(paper_path), "--roster-json", str(roster_path), "--trends", str(trends_path), "--dry-run"])
     operation.checkpoint()
     if route_code != 0 or not isinstance(route, dict):
         raise RuntimeError(
@@ -258,8 +260,8 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
         if not person:
             continue
         receiver_ref = _text(owner.get("receiver_ref")) if isinstance(owner, dict) else ""
-        if cas_config and not receiver_ref:
-            errors.append(f"{person}: FastCAS 服务投递需要名册中的 receiver_ref")
+        if not receiver_ref:
+            errors.append(f"{person}: 请在分发设置中填写 Research 收件账号（receiver_ref）")
             continue
         try:
             with operation.effect():
@@ -277,15 +279,18 @@ def process(paper, *, roster_path=None, endpoint=None, ingest_key=None, trend_te
                 )
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
             errors.append(f"{person}: {exc}")
-    return {"paper": paper, "route": route, "route_code": route_code, "delivered": delivered, "errors": errors}
+    return {"roster_revision": snapshot["revision"], "paper": paper, "route": route, "route_code": route_code, "delivered": delivered, "errors": errors}
 
 
 def main():
     import argparse
+    if str(ROOT.parent) not in sys.path:
+        sys.path.insert(0, str(ROOT.parent))
+    from fastinsight.config import load_env
+    load_env()
 
     parser = argparse.ArgumentParser(description="Automatically process and publish a FastInsight paper")
     parser.add_argument("--paper", required=True, help="JSON paper object or file")
-    parser.add_argument("--roster", default=str(ROSTER_DEFAULT))
     parser.add_argument("--endpoint", default=None)
     parser.add_argument("--ingest-key", default=None)
     parser.add_argument(
@@ -305,7 +310,6 @@ def main():
         json.dumps(
             process(
                 paper,
-                roster_path=args.roster,
                 endpoint=args.endpoint,
                 ingest_key=args.ingest_key,
                 trend_text=args.trend_text,

@@ -19,8 +19,9 @@ page documents (1) Feishu as an input channel, (2) long connection mode, and
 4. After FastResearch publish succeeds, a short confirmation in the **source
    chat** is allowed. Do not send owner cards. Do not 私聊 / DM owners.
 
-Owner `name` in `colleagues.yaml` is the FastResearch `person`. `feishu_open_id`
-is optional and unused for delivery.
+Owners are configured in the FastResearch database through its routing settings page.
+`receiver_ref` is the explicit recipient account ID; `name` is a display label.
+`feishu_open_id` is optional and unused for delivery.
 
 ## 2. Long connection mode (self-hosting)
 
@@ -31,7 +32,7 @@ WebSocket connection. Configure the app in the Feishu developer console:
 2. Under event subscriptions choose **use long connection to receive events**.
 3. Subscribe to `im.message.receive_v1`.
 4. Set `FEISHU_APP_ID` and `FEISHU_APP_SECRET`, then run
-   `python scripts/feishu_bridge.py`.
+   `uv run --locked python feishu_bot.py`.
 
 No public request URL or `FEISHU_VERIFICATION_TOKEN` is needed. The SDK handles
 connection heartbeats and reconnects. The bridge dispatches text/link messages

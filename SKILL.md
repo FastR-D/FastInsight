@@ -1,156 +1,119 @@
 ---
 name: fastinsight
-description: "Use FastInsight to process a paper, poster, or research-news screenshot or link from a Feishu/Lark group: extract metadata, verify it with academic sources, summarize citation and related-work signals, classify it against colleagues.yaml, generate a safe interactive card, and route it to valid Feishu open_id owners. Also use it to configure or validate the research-direction roster. Trigger for paper screenshots, article links, 飞书机器人自动分拣论文, research-news triage, or requests to forward a paper to the right teammate."
+description: "Process a paper screenshot or link from Feishu: identify, verify, summarize, classify against the FastResearch database configuration, and publish to explicit Research recipient accounts. Also configure or validate routing through the Research settings page."
 ---
 
 # FastInsight
 
 ## Purpose
 
-Use the Feishu bot through the official long-lived WebSocket connection for a complete paper-triage loop:
+Use Feishu as an input channel. Identify the paper, verify and enrich its metadata,
+generate a trend summary, match the configured directions, publish into FastResearch,
+and confirm successful delivery in the source conversation. Do not send owner cards
+or direct messages. The standalone bot entry point is `feishu_bot.py`.
 
-`image or link → identify → verify → summarize → classify → preview → forward → confirm`
+## Environment
 
-`scripts/feishu_bridge.py` maintains the connection and invokes the local
-pipeline; no public webhook server is required.
-
-## Prerequisites
-
-1. Create a Feishu app with bot capability, enable long connection event
-   delivery, and subscribe to `im.message.receive_v1`. Set `FEISHU_APP_ID` and
-   `FEISHU_APP_SECRET`.
-2. Install dependencies with `pip install -r requirements.txt`.
-3. Copy `assets/colleagues.yaml.example` to `colleagues.yaml`, fill in real
-   `feishu_open_id` values, and run:
-   `python scripts/validate_roster.py colleagues.yaml`.
-4. Provide outbound network access only when academic verification or trend
-   enrichment is needed. Basic lookups use Semantic Scholar, arXiv, and Crossref
-   without API keys; see `references/academic_search.md`.
+1. Run `uv sync --locked` to create the project `.venv` using `.python-version`.
+   Dependencies, including FastCAS, are declared in `pyproject.toml` and locked in `uv.lock`.
+2. Configure `.env` from `.env.example`: Feishu application credentials, Research URL,
+   and either a full FastCAS service identity or an explicitly enabled legacy ingest key.
+3. Configure keywords, directions, members and the default receiver in the FastResearch
+   routing settings page. Each recipient needs its explicit `receiver_ref` account ID.
+4. Start with `./run.sh` or `uv run --locked python feishu_bot.py`. Do not start a second
+   long connection for an already-running Feishu application.
 
 ## Operating workflow
 
-### 1. Extract the source
+### Identify and verify
 
-- Read the screenshot and caption multimodally. Extract the title, authors,
-  venue/year, DOI/arXiv ID, URL, and any topic supplied by the sender.
-- If the title or link is ambiguous, ask the sender in the group. Do not invent
-  metadata or route an unreadable image.
-- Treat a news or industry item as a non-paper item: use its headline, caption,
-  and URL; skip academic verification and citation analysis unless requested.
-
-### 2. Verify and enrich
-
-For papers, run:
+Read the screenshot or link and identify title, authors, venue/year, DOI/arXiv ID,
+and paper URL. Ask for clarification when multiple papers are plausible; do not
+invent metadata. Treat news items as non-paper material when appropriate.
 
 ```bash
-python scripts/verify_paper.py --query "Attention Is All You Need" --json-out paper.json
+uv run --locked python scripts/verify_paper.py --query "Attention Is All You Need" --json-out paper.json
 ```
 
-Use the `best` object when verification succeeds. If all APIs fail, retain the
-metadata extracted from the image and clearly mark verification as unavailable.
-Never present an API fallback as confirmed identity.
+Use the `best` object when verification succeeds. Failed verification must not be
+presented as confirmed identity. Preserve supplied metadata when a fetched page is unrelated.
 
-### 3. Add optional insight
-
-For papers, run:
+### Summarize
 
 ```bash
-python scripts/analyze_trends.py --paper paper.json --json-out trends.json
+uv run --locked python scripts/analyze_trends.py --paper paper.json --json-out trends.json
 ```
 
-Treat trends as supplementary context. If the API is unavailable, keep the
-route pipeline running and state that citation data needs manual review.
+Prepare a substantive LLM trend summary before delivery. Do not send an incomplete
+card with a missing URL or a placeholder trend. Citation statistics are supplementary.
 
-### 4. Classify and preview
-
-Run the roster-driven route in dry-run mode first:
+### Preview routing
 
 ```bash
-python scripts/route_paper.py --paper paper.json --roster colleagues.yaml --trends trends.json --dry-run
+uv run --locked python scripts/route_paper.py --paper paper.json --trends trends.json --dry-run
 ```
 
-The router matches normalized `title + abstract + venue` text against each
-direction's keywords. ASCII keywords use token boundaries, while Chinese or
-mixed-language phrases use case-insensitive phrase matching. Higher scores win;
-`priority` breaks ties when configured, then roster order does.
+The default source is `GET /api/fastinsight/roster`, authenticated with the same service
+identity as publishing. It returns the current Research database snapshot and revision.
+`--roster-json snapshot.json` is only for explicit offline previews; normal operation
+never reads a YAML roster or `FASTINSIGHT_ROSTER`.
 
-Only real, non-placeholder Feishu IDs are routable. A missing match or invalid
-direction owner falls back to a valid `default_owner` when available. Inspect
-`matched_direction`, `hits`, `fallback`, `owners`, and `routable` before sending.
+The router matches `title + abstract + venue` case-insensitively. ASCII keywords use
+word boundaries. Every matched direction contributes its connected members; recipients
+are deduplicated by `receiver_ref`, not by display name. Scores, priority and roster
+order determine the primary direction. No keyword match goes directly to the default
+receiver without semantic rerouting. Matched directions with no members do not create
+an implicit default relationship. Missing default receivers mean no fallback delivery.
 
-### 5. Forward and confirm
+### Publish and confirm
 
-When `routable` is true, the delivery has TWO mandatory steps — doing only one
-means the team will say "FastResearch 没有接收到":
-
-1. Send the generated interactive card to every returned owner (Feishu API or
-   connector). For a persisted payload, omit `--dry-run`; the default output is
-   `feishu_card_payload.json`. Wrap HTTP calls in a retry (the Feishu API
-   intermittently fails with `SSL UNEXPECTED_EOF`).
-2. Publish the same result to the FastResearch local service (it is a separate
-   inbox from Feishu and receives nothing automatically):
-
-   ```bash
-   python scripts/publish_to_research.py --paper paper.json --trends trends.json \
-     --person "成员名" --direction "方向名"
-   ```
-
-   Requires `FASTRESEARCH_URL` and `FASTINSIGHT_INGEST_KEY` from `.env`. Check
-   `{"ok":true,"deliveredTo":[...]}` in the response. Note `route_paper.py`
-   persists the card with `--card-out` (not `--json-out`), and that file
-   contains only `msg_type` + `card` — owners must come from the dry-run
-   output.
-
-Then confirm in the source group, for example:
-
-`✅ 已将《标题》分拣至【方向】，转发给 @张三、@李四，并已发布至 FastResearch。`
-
-Include the short trend summary when available. Mention fallback routing so the
-sender can correct the classification.
-
-## Roster contract
-
-Use this shape:
-
-```yaml
-directions:
-  - name: "方向名称"
-    priority: 10
-    keywords: ["distinctive phrase", "中文关键词"]
-    owners:
-      - name: "同事"
-        feishu_open_id: "ou_real_id"
-default_owner:
-  name: "组长"
-  feishu_open_id: "ou_real_id"
+```bash
+uv run --locked python scripts/auto_pipeline.py --paper paper.json --trend-text "A substantive trend summary."
 ```
 
-Keep keywords distinctive and maintain the roster with
-`python scripts/validate_roster.py colleagues.yaml` after every edit. See
-`references/research_taxonomy.md` for starter directions.
+The pipeline reads one fresh database snapshot per paper and records `roster_revision`.
+A failed configuration read stops delivery. Every selected member must have `receiver_ref`;
+never guess identity from a name. Check `delivered` and `errors` before confirming success.
+Only recipients acknowledged by successful Research receipts may be mentioned in the
+source-chat confirmation. Partial delivery must be reported as partial delivery.
+
+## Maintaining configuration
+
+Use the Research settings page's three independent keyword/direction/member columns.
+Connect nodes by dragging ports or edit relationships with the tag checkboxes in dialogs.
+The default rule is visible in the graph. Save changes before expecting the next paper to
+use them. `receiver_ref` is the stable Research account ID; Feishu Open ID is optional metadata.
+
+```bash
+uv run --locked python scripts/validate_roster.py
+```
+
+For a one-time legacy import into an empty database, provide an administrator session
+via `FASTRESEARCH_ADMIN_SESSION`, then run:
+
+```bash
+uv run --locked python scripts/import_roster.py assets/colleagues.yaml
+```
+
+The importer preserves the source file, refuses to overwrite existing configuration,
+and uses a revision check. Runtime service identity never grants configuration writes.
+After importing, fill any missing recipient account references in the settings page.
 
 ## Resources
 
-- `scripts/verify_paper.py`: verify and enrich a paper through public APIs.
-- `scripts/analyze_trends.py`: collect citation, field, and related-work signals.
-- `scripts/route_paper.py`: classify, validate owners, and render the card.
-- `scripts/publish_to_research.py`: publish a routed result into a FastResearch member workspace.
-- `scripts/auto_pipeline.py`: automatically verify, enrich, route, and publish a paper.
-- `scripts/feishu_bridge.py`: receive Feishu events over a long-lived connection and trigger the automatic pipeline.
-- `scripts/validate_roster.py`: lint roster structure, IDs, duplicates, and
-  placeholders.
-- `scripts/mini_yaml.py`: dependency-free fallback parser for the roster subset.
-- `references/feishu_integration.md`: connector, long connection, and raw API send/receive notes.
-- `references/research_taxonomy.md`: starter research directions and keywords.
-- `references/academic_search.md`: endpoints, optional credentials, and fallback
-  behavior.
-- `assets/colleagues.yaml.example`: roster template.
-- `assets/feishu_card.json`: interactive card template.
+- `scripts/roster_client.py`: authenticated database snapshot reads.
+- `scripts/import_roster.py`: explicit one-time YAML/JSON migration.
+- `scripts/route_paper.py`: keyword/default routing and card previews.
+- `scripts/auto_pipeline.py`: enrichment, routing and Research publication.
+- `references/research_taxonomy.md`: starter directions and keywords.
+- `references/academic_search.md`: academic verification and enrichment.
+- `references/feishu_integration.md`: Feishu input and connection configuration.
 
-## Guardrails
+## Validation
 
-- Never send to a missing, placeholder, or unvalidated `feishu_open_id`.
-- Ask for clarification when the image contains multiple plausible papers.
-- Do not claim a paper is verified when APIs failed or the match is uncertain.
-- Forward paper metadata and link only; omit sender identity unless required.
-- Preview every newly configured route before enabling live forwarding.
+```bash
+uv run --locked python -m unittest discover -s tests -v
+```
+
+Use isolated fixtures for tests. Never send live test messages or papers to real users
+unless the user has requested that action.

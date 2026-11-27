@@ -1,13 +1,15 @@
 # ============================================================================
 # 研究方向 → 负责同学 名册 (colleagues roster)
 # ----------------------------------------------------------------------------
-# 用法：复制本文件为 colleagues.yaml，填入你们团队的真实信息。
+# 历史格式示例，仅用于一次性导入；运行时不读取 YAML。
+# 当前配置请在 FastResearch 工作台「论文分发设置」中维护。
 # 每个 direction 的 keywords 用于自动匹配论文标题/摘要，命中越多分越高。
 # 可选 priority 用于同分时明确指定优先级，数值越大越优先。
-# owners.name 是 FastResearch 投递对象（必填）。feishu_open_id 可选，当前
-# 工作流不再向飞书负责人转发卡片。
+# owners.name 仅作显示；投递必须提供明确的 receiver_ref 收件账号 ID。
+# 导入后请在设置页补全收件账号。feishu_open_id 可选，不用于投递。
 # 没有任何方向命中时，会 fallback 到 default_owner（可选，留空则提示人工处理）。
-# 修改后运行：python scripts/validate_roster.py colleagues.yaml
+# 一次性导入：uv run --locked python scripts/import_roster.py <旧配置路径>
+# 读取数据库校验：uv run --locked python scripts/validate_roster.py
 # ============================================================================
 
 directions:

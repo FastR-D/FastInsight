@@ -46,13 +46,6 @@ def load_env(env_file: Optional[Path] = None) -> Path:
             continue
         seen.add(resolved)
         load_env_file(resolved)
-    roster = os.environ.get("FASTINSIGHT_ROSTER", "").strip()
-    if roster:
-        roster_path = Path(roster).expanduser()
-        if not roster_path.is_absolute():
-            os.environ["FASTINSIGHT_ROSTER"] = str((ROOT / roster_path).resolve())
-    elif not os.environ.get("FASTINSIGHT_ROSTER"):
-        os.environ["FASTINSIGHT_ROSTER"] = str(ROOT / "assets" / "colleagues.yaml")
     return ROOT
 
 

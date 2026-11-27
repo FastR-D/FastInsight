@@ -1,166 +1,48 @@
 #!/usr/bin/env python3
-"""Validate the colleagues.yaml roster used by FastInsight.
-
-Checks structure, required names, duplicate direction names, duplicate
-keywords, and duplicate owners within a direction. Missing Feishu open_id
-values are warnings because FastInsight publishes by person name to
-FastResearch and no longer forwards Feishu cards internally.
-"""
+"""Validate the current Research database roster or an explicit JSON snapshot."""
 import argparse
-import os
+import json
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-
-def load_roster(path):
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-    try:
-        import yaml
-
-        return yaml.safe_load(text)
-    except ImportError:
-        from mini_yaml import load
-
-        return load(text)
-
-
-def _text(value):
-    return str(value).strip() if value is not None else ""
-
-
-def _is_placeholder(value):
-    normalized = _text(value).casefold()
-    return (
-        not normalized
-        or normalized.startswith(("ou_xxxx", "<", "{{", "your_", "replace_"))
-        or "xxxxxxxx" in normalized
-    )
-
-
-def _validate_owner(owner, tag, errors, warnings, seen_ids=None):
-    if not isinstance(owner, dict):
-        errors.append(f"{tag}: 必须是 mapping")
-        return
-    name = _text(owner.get("name"))
-    open_id = _text(owner.get("feishu_open_id"))
-    if not name:
-        errors.append(f"{tag}: 缺少 name")
-    if _is_placeholder(open_id):
-        warnings.append(
-            f"{tag} ({name or '未命名'}): feishu_open_id 缺失或为占位符；"
-            "FastResearch 仅按姓名投递，可忽略"
-        )
-    elif seen_ids is not None:
-        if open_id in seen_ids:
-            seen_ids[open_id] += 1
-        else:
-            seen_ids[open_id] = 1
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fastinsight.config import load_env
+from roster_client import fetch_roster, validate_roster
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Validate a FastInsight colleagues.yaml roster."
-    )
-    parser.add_argument("roster")
+    load_env()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--endpoint", default=None)
+    parser.add_argument("--roster-json", help="Optional offline JSON snapshot")
     args = parser.parse_args()
-
-    if not os.path.exists(args.roster):
-        print(f"ERROR: file not found: {args.roster}")
-        sys.exit(1)
-
-    errors = []
-    warnings = []
     try:
-        data = load_roster(args.roster)
-    except Exception as exc:  # noqa: BLE001 - present a CLI-friendly diagnostic
-        print(f"❌ ERROR: 无法解析 roster: {exc}")
-        sys.exit(1)
-
-    if not isinstance(data, dict):
-        print("❌ ERROR: 顶层必须是 mapping（包含 directions / default_owner）")
-        sys.exit(1)
-
-    directions = data.get("directions")
-    if not isinstance(directions, list) or not directions:
-        errors.append("缺少 directions 列表，或为空")
+        if args.roster_json:
+            with open(args.roster_json, encoding="utf-8") as source:
+                roster = validate_roster(json.load(source))
+        else:
+            roster = fetch_roster(args.endpoint)["roster"]
+    except (OSError, ValueError, RuntimeError) as error:
+        parser.error(str(error))
+    warnings = []
+    owners = []
+    for direction in roster["directions"]:
+        if not direction["keywords"]:
+            warnings.append(f'{direction["name"]}: 尚未连接关键词')
+        if not direction["owners"]:
+            warnings.append(f'{direction["name"]}: 尚未连接成员，命中该方向时不会投递')
+        owners.extend(direction["owners"])
+    if roster.get("default_owner"):
+        owners.append(roster["default_owner"])
     else:
-        direction_names = {}
-        for index, direction in enumerate(directions):
-            tag = f"directions[{index}]"
-            if not isinstance(direction, dict):
-                errors.append(f"{tag}: 必须是 mapping")
-                continue
-
-            name = _text(direction.get("name"))
-            if not name:
-                errors.append(f"{tag}: 缺少 name")
-            elif name in direction_names:
-                errors.append(
-                    f"{tag}: name 与 directions[{direction_names[name]}] 重复：{name}"
-                )
-            else:
-                direction_names[name] = index
-
-            keywords = direction.get("keywords")
-            if not isinstance(keywords, list) or not keywords:
-                warnings.append(
-                    f"{tag} ({name or '未命名'}): 没有配置 keywords，将无法自动匹配"
-                )
-            else:
-                normalized_keywords = set()
-                for keyword_index, keyword in enumerate(keywords):
-                    keyword_text = _text(keyword)
-                    if not keyword_text:
-                        errors.append(f"{tag}.keywords[{keyword_index}]: 不能为空")
-                        continue
-                    normalized = keyword_text.casefold()
-                    if normalized in normalized_keywords:
-                        warnings.append(
-                            f"{tag} ({name or '未命名'}): keyword 重复：{keyword_text}"
-                        )
-                    normalized_keywords.add(normalized)
-
-            owners = direction.get("owners")
-            if not isinstance(owners, list) or not owners:
-                warnings.append(
-                    f"{tag} ({name or '未命名'}): 没有配置 owners，将尝试 default_owner"
-                )
-            else:
-                seen_direction_ids = {}
-                for owner_index, owner in enumerate(owners):
-                    _validate_owner(
-                        owner,
-                        f"{tag}.owners[{owner_index}]",
-                        errors,
-                        warnings,
-                        seen_direction_ids,
-                    )
-                for open_id, count in seen_direction_ids.items():
-                    if count > 1:
-                        warnings.append(
-                            f"{tag} ({name or '未命名'}): 同一 open_id 重复 {count} 次：{open_id}"
-                        )
-
-    default_owner = data.get("default_owner")
-    if default_owner is None:
-        warnings.append("未配置 default_owner：没有方向命中时将无法自动兜底")
-    else:
-        _validate_owner(default_owner, "default_owner", errors, warnings)
-
-    if errors:
-        print("❌ ERRORS:")
-        for error in errors:
-            print("  -", error)
-    if warnings:
-        print("⚠️  WARNINGS:")
-        for warning in warnings:
-            print("  -", warning)
-    if not errors and not warnings:
-        print("✅ roster 校验通过")
-
-    sys.exit(1 if errors else 0)
+        warnings.append("未设置默认接收人：没有关键词命中时不会投递")
+    for owner in owners:
+        if not owner.get("receiver_ref", "").strip():
+            warnings.append(f'{owner["name"]}: 缺少 Research 收件账号（receiver_ref），不能投递')
+    print("配置结构有效")
+    for warning in dict.fromkeys(warnings):
+        print("警告: " + warning)
 
 
 if __name__ == "__main__":
