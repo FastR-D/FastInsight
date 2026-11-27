@@ -105,6 +105,8 @@ uv run --locked python scripts/validate_roster.py --endpoint https://research.ex
 不再参与运行。旧配置若缺少 `receiver_ref`，请在设置页补全；执行端不会按同名账号猜测接收人。
 迁移脚本使用管理员身份，运行时读取和投递使用下文的服务身份，两者不要混用。
 
+没有管理员会话但拥有 Research 数据库运维权限时，可使用 FastResearch 的 `cmd/fastresearch-roster` 命令预览、导入并回读验证，见 [Research 旧配置迁移说明](https://github.com/FastR-D/FastResearch/blob/main/docs/roster-migration.md)。应使用实际部署中的旧文件，保留关键词、方向、成员关联及默认接收人；升级代码本身不会迁移数据。上线前必须用实际服务身份运行 `validate_roster.py`，确认数据库接口可读。
+
 正常预览直接读取数据库：
 
 ```bash

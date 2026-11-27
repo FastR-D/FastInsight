@@ -38,10 +38,20 @@ def bot_world():
                 world.image_release.set()
                 world.publish_release.set()
                 bot.handle_event(event("cleanup", "@fastinsight cancel"))
-                for thread in set(threading.enumerate()) - existing_threads:
-                    thread.join(5)
-                    if thread.is_alive():
-                        raise AssertionError(f"Scenario-owned thread did not finish: {thread.name}")
+                deadline = time.monotonic() + 10
+                while pending := set(threading.enumerate()) - existing_threads:
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("Scenario-owned threads did not finish: " + ", ".join(thread.name for thread in pending))
+                    for thread in pending:
+                        try:
+                            thread.join(min(0.05, max(0, deadline - time.monotonic())))
+                        except RuntimeError as error:
+                            # enumerate() includes threads in Thread.start()'s limbo
+                            # set before their started event is published. Wait for
+                            # them instead of either joining too soon or skipping.
+                            if str(error) != "cannot join thread before it is started":
+                                raise
+                    time.sleep(0.005)
 
 
 def wait_until(predicate):
