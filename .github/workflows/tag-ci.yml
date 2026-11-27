@@ -61,12 +61,15 @@ jobs:
       artifact-name: release-${{ github.sha }}
       # These values are literal KEY=value entries; do not add shell quotes.
       # Code-relative paths are supplied by the trusted FastDeploy server profile.
+      # The pinned FastDeploy profile still requires FASTINSIGHT_ROSTER metadata.
+      # Runtime ignores this legacy variable and fetches the Research database.
       runtime-env: |
         FASTINSIGHT_ALLOW_LEGACY_INGEST_KEY=false
         FASTINSIGHT_FASTCAS_ALLOW_LOOPBACK_HTTP=false
         FASTINSIGHT_FASTCAS_CLIENT_ID=fastinsight
         FASTINSIGHT_FASTCAS_ISSUER=https://cas.fastrd.io
         FASTINSIGHT_STATE_DIR=/home/dev/fastinsight
+        FASTINSIGHT_ROSTER=/home/dev/fastinsight/assets/colleagues.yaml
         FASTRESEARCH_URL=http://127.0.0.1:8787
         OPENAI_BASE_URL=https://api.deepseek.com
         OPENAI_MODEL=deepseek-flash
